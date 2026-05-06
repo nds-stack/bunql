@@ -1,0 +1,7 @@
+test/
+bench/
+examples/
+.eslintrc*
+tsconfig.json
+*.test.ts
+*.bench.ts
