@@ -91,14 +91,24 @@ describe("RetryPolicy", () => {
     expect(uniqueDelays.size).toBeGreaterThan(1);
   });
 
-  test("isBusyError detects various busy error messages", () => {
+  test("isBusyError detects SQLITE_BUSY via errno", () => {
     const policy = new RetryPolicy();
 
+    // Simulate Bun SQLiteError with errno
+    const makeBusyError = (errno: number) => {
+      const e = new Error("database is locked");
+      Object.defineProperty(e, "errno", { value: errno, enumerable: true });
+      return e;
+    };
+
+    expect(policy.isBusyError(makeBusyError(5))).toBe(true);   // SQLITE_BUSY
+    expect(policy.isBusyError(makeBusyError(517))).toBe(true); // SQLITE_BUSY_SNAPSHOT
+    expect(policy.isBusyError(makeBusyError(1))).toBe(false);  // SQLITE_ERROR
+    expect(policy.isBusyError(makeBusyError(19))).toBe(false); // SQLITE_CONSTRAINT
+
+    // Fallback to message-based detection for non-errno errors
     expect(policy.isBusyError(new Error("database is locked"))).toBe(true);
-    expect(policy.isBusyError(new Error("SQLITE_BUSY"))).toBe(true);
-    expect(policy.isBusyError(new Error("sqlite_busy"))).toBe(true);
-    expect(policy.isBusyError(new Error("busy timeout"))).toBe(true);
-    expect(policy.isBusyError(new Error("SQLITE_ERROR"))).toBe(false);
+    expect(policy.isBusyError(new Error("SQLITE_BUSY"))).toBe(false); // no errno, no msg match
     expect(policy.isBusyError(new Error("some other error"))).toBe(false);
     expect(policy.isBusyError(null)).toBe(false);
     expect(policy.isBusyError("string")).toBe(false);

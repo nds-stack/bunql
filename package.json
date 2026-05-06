@@ -1,14 +1,15 @@
 {
-  "name": "bunql",
+  "name": "@nds-stack/bunql",
   "version": "0.1.0-alpha.0",
-  "description": "Lightweight SQLite wrapper for Bun with queued writes, serialized transactions, and SQLITE_BUSY handling",
+  "description": "Lightweight SQLite wrapper for Bun — queued writes, serialized transactions, SQLITE_BUSY handling",
+  "author": "nds-stack <nds.stack@gmail.com>",
   "type": "module",
-  "main": "src/index.ts",
-  "types": "src/index.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./src/index.ts",
-      "types": "./src/index.ts"
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
     }
   },
   "scripts": {
@@ -17,22 +18,32 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc --noEmit",
+    "typecheck:build": "tsc -p tsconfig.build.json",
     "bench": "bun run bench/runner.ts",
-    "prepublishOnly": "bun run lint && bun run typecheck && bun test"
+    "prepublishOnly": "bun run lint && bun run typecheck && bun test && bun run build",
+    "build": "bun build ./src/index.ts --outdir=./dist --target=bun --format=esm --external bun:sqlite && tsc -p tsconfig.build.json",
+    "clean": "bun run --bun \"rm -rf dist\""
   },
   "files": [
-    "src/",
-    "!src/**/*.test.ts",
-    "!src/**/*.bench.ts"
+    "dist/",
+    "README.md"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nds-stack/bunql.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nds-stack/bunql/issues"
+  },
+  "homepage": "https://github.com/nds-stack/bunql#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/bun": "latest",
     "eslint": "^10.3.0",
     "typescript-eslint": "^8.59.2"
-  },
-  "peerDependencies": {
-    "typescript": "^5.0.0"
   },
   "engines": {
     "bun": ">=1.0.0"
@@ -40,10 +51,15 @@
   "keywords": [
     "bun",
     "sqlite",
+    "bun-sqlite",
+    "database",
     "wrapper",
-    "lightweight",
     "concurrency",
-    "queue"
+    "queue",
+    "transaction",
+    "sqlite-busy",
+    "wal",
+    "typescript"
   ],
   "license": "MIT"
 }

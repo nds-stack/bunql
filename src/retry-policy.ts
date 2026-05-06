@@ -46,8 +46,13 @@ export class RetryPolicy {
 
   isBusyError(error: unknown): boolean {
     if (error instanceof Error) {
+      if ("errno" in error && typeof (error as Record<string, unknown>).errno === "number") {
+        const errno = (error as Record<string, unknown>).errno as number;
+        // SQLITE_BUSY = 5, SQLITE_BUSY_SNAPSHOT = 517
+        return errno === 5 || errno === 517;
+      }
       const msg = error.message.toLowerCase();
-      return msg.includes("database is locked") || msg.includes("sqlite_busy") || msg.includes("busy");
+      return msg.includes("database is locked");
     }
     return false;
   }

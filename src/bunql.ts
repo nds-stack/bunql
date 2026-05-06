@@ -207,6 +207,7 @@ export class BunQL {
     this.#closed = true;
 
     this.#writeQueue.close();
+    this.#writeQueue.clearPending("Database is closing");
 
     try {
       await this.#writeQueue.drain();

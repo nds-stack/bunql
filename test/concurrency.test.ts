@@ -153,4 +153,122 @@ describe("Concurrency", () => {
 
     db.close();
   });
+
+  test("close while write spam does not leak errors", async () => {
+    const db = new BunQL(dbPath);
+    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
+
+    // Fire many concurrent writes
+    const promises: Promise<unknown>[] = [];
+    for (let i = 0; i < 50; i++) {
+      promises.push(
+        db.run("INSERT INTO test (val) VALUES (?)", [`spam-${i}`]).catch(() => {}),
+      );
+    }
+
+    // Close immediately without waiting for all writes
+    await db.close();
+    expect(db.closed).toBe(true);
+
+    // All promises should settle (resolve or reject)
+    await Promise.allSettled(promises);
+  });
+
+  test("statement cache cleanup on close", async () => {
+    const db = new BunQL(dbPath);
+    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
+
+    // Populate the statement cache
+    for (let i = 0; i < 10; i++) {
+      db.query(`SELECT ${i} AS val`);
+    }
+
+    // Close should finalize all cached statements without throwing
+    await db.close();
+    expect(db.closed).toBe(true);
+  });
+
+  test("long-running queue stability", async () => {
+    const db = new BunQL(dbPath);
+    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
+
+    // 500 sequential writes to test stability
+    for (let i = 0; i < 500; i++) {
+      await db.run("INSERT INTO test (val) VALUES (?)", [`seq-${i}`]);
+    }
+
+    const count = db.query<{ cnt: number }>("SELECT COUNT(*) as cnt FROM test");
+    expect(count.rows[0]?.cnt).toBe(500);
+
+    db.close();
+  });
+
+  test("transaction storm with mixed operations", async () => {
+    const db = new BunQL(dbPath);
+    await db.run("CREATE TABLE account (id INTEGER PRIMARY KEY, balance INTEGER)");
+    await db.run("INSERT INTO account VALUES (1, 1000)");
+    await db.run("INSERT INTO account VALUES (2, 0)");
+
+    // 50 concurrent transactions simulating transfers
+    const txs = Array.from({ length: 50 }, (_, i) =>
+      db.transaction(async (tx) => {
+        const from = tx.query<{ balance: number }>(
+          "SELECT balance FROM account WHERE id = 1",
+        );
+        const amount = 10;
+        const currentFrom = from[0]?.balance ?? 0;
+
+        if (currentFrom >= amount) {
+          await tx.run("UPDATE account SET balance = balance - ? WHERE id = 1", [amount]);
+          await tx.run("UPDATE account SET balance = balance + ? WHERE id = 2", [amount]);
+        }
+        return i;
+      }),
+    );
+
+    const results = await Promise.all(txs);
+    expect(results).toHaveLength(50);
+
+    const balances = db.query<{ balance: number }>(
+      "SELECT balance FROM account ORDER BY id",
+    );
+    const total = (balances.rows[0]?.balance ?? 0) + (balances.rows[1]?.balance ?? 0);
+    expect(total).toBe(1000); // Total should be preserved
+
+    db.close();
+  });
+
+  test("stress: interleaved read/write/transaction storm", async () => {
+    const db = new BunQL(dbPath);
+    await db.run("CREATE TABLE stress (id INTEGER PRIMARY KEY, val TEXT)");
+
+    const allOps: Promise<unknown>[] = [];
+
+    // Mix of writes
+    for (let i = 0; i < 30; i++) {
+      allOps.push(db.run("INSERT INTO stress (val) VALUES (?)", [`write-${i}`]));
+    }
+
+    // Mix of reads
+    for (let i = 0; i < 30; i++) {
+      allOps.push(Promise.resolve(db.query("SELECT COUNT(*) as cnt FROM stress")));
+    }
+
+    // Mix of transactions
+    for (let i = 0; i < 10; i++) {
+      allOps.push(
+        db.transaction(async (tx) => {
+          const rows = tx.query<{ val: string }>("SELECT val FROM stress ORDER BY id DESC LIMIT 1");
+          return rows;
+        }),
+      );
+    }
+
+    await Promise.all(allOps);
+
+    const final = db.query<{ cnt: number }>("SELECT COUNT(*) as cnt FROM stress");
+    expect(final.rows[0]?.cnt).toBe(30);
+
+    db.close();
+  });
 });

@@ -52,8 +52,7 @@ export class TransactionManager {
         try {
           result = await callback(ctx);
         } catch (error) {
-          this.#rollback(startTime);
-          throw error;
+          this.#rollback(startTime, error instanceof Error ? error : undefined);
         }
 
         this.#db.run("COMMIT");
@@ -98,12 +97,14 @@ export class TransactionManager {
     }
   }
 
-  #rollback(startTime: number): never {
+  #rollback(startTime: number, originalError?: Error): never {
     this.#db.run("ROLLBACK");
     const duration = performance.now() - startTime;
     this.#hooks?.afterTransaction?.(duration, false);
     this.#log("warn", "Transaction rolled back");
-    throw new TransactionError("Transaction failed and was rolled back");
+    throw new TransactionError("Transaction failed and was rolled back", {
+      cause: originalError,
+    });
   }
 
   #createContext(): TransactionContext {

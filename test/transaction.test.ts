@@ -38,7 +38,7 @@ describe("Transaction", () => {
     db.close();
   });
 
-  test("transaction rolls back on error", async () => {
+  test("transaction rolls back on error, preserving original cause", async () => {
     const db = new BunQL(dbPath);
     await db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
     await db.run("INSERT INTO users (name) VALUES ('Initial')");
@@ -51,6 +51,9 @@ describe("Transaction", () => {
       expect.unreachable();
     } catch (e) {
       expect((e as Error).message).toBe("Transaction failed and was rolled back");
+      // Original error should be preserved in cause
+      expect((e as Error).cause).toBeDefined();
+      expect(((e as Error).cause as Error).message).toBe("something went wrong");
     }
 
     const users = db.query<{ name: string }>("SELECT name FROM users ORDER BY id");

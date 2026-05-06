@@ -10,6 +10,9 @@ export default [
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    ignores: ["dist/"],
+  },
+  {
     files: ["**/*.ts"],
     languageOptions: {
       parserOptions: {
@@ -18,7 +21,7 @@ export default [
     },
     rules: {
       "@typescript-eslint/no-explicit-any": "error",
-      "@typescript-eslint/no-unused-vars": "error",
+      "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
       "prefer-const": "error",
       "no-console": "warn",
     },
