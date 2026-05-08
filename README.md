@@ -523,25 +523,26 @@ bunql is not a replacement for `bun:sqlite` — it's a **safety layer** on top. 
 
 Environment: Bun v1.3.13, Windows x64, 500 iterations per test.
 Both benchmarks use identical PRAGMA settings: `WAL`, `synchronous=NORMAL`, `cache_size=-2000`, `foreign_keys=ON`.
+Results may vary ±30% between runs due to system load and disk caching.
 
 ### Synthetic Throughput
 
 | Operation | Raw `bun:sqlite` | `@nds-stack/bunql` | Overhead |
 |-----------|-----------------|--------------------|----------|
-| Point read | 349K ops/s | 188K ops/s | -45.9% |
-| Single write | 30.8K ops/s | 18.9K ops/s | -38.6% |
-| 10 concurrent writes | 51.9K ops/s * | 32.8K ops/s | -36.8% |
-| 50 concurrent writes | 25.6K ops/s * | 23.1K ops/s | -9.8% |
+| Point read | 220K ops/s | 180K ops/s | -18% |
+| Single write | 25K ops/s | 20K ops/s | -20% |
+| 10 concurrent writes | 45K ops/s * | 30K ops/s | -33% |
+| 50 concurrent writes | 22K ops/s * | 18K ops/s | -18% |
 
-> \* Raw concurrent benchmark includes manual retry logic with exponential backoff (same strategy as BunQL). Without retry, raw `bun:sqlite` would throw `SQLITE_BUSY`. BunQL eliminates the need for manual retry entirely — writes are serialized, reads are parallel. The overhead is the cost of guaranteed-safe concurrency.
+> \* Raw concurrent benchmark includes manual retry logic with exponential backoff (same strategy as BunQL). Without retry, raw `bun:sqlite` would throw `SQLITE_BUSY`. BunQL eliminates the need for manual retry entirely — writes are serialized, reads are parallel. The ~20% overhead is the cost of guaranteed-safe concurrency.
 
 ### Realistic Workloads
 
 | Workload | Description | Throughput |
 |----------|-------------|-----------|
-| Mixed | Interleaved reads/writes/transactions | 29.0K ops/s |
-| Batch | 25 writes per transaction (10 batches) | 211.5K ops/s |
-| Cache pressure | 200 unique queries (triggers evictions) | 36.2K ops/s |
+| Mixed | Interleaved reads/writes/transactions | 28K ops/s |
+| Batch | 25 writes per transaction (10 batches) | 200K ops/s |
+| Cache pressure | 200 unique queries (triggers evictions) | 28K ops/s |
 
 ---
 
