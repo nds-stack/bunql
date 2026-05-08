@@ -1,4 +1,5 @@
 import { Database, type SQLQueryBindings } from "bun:sqlite";
+import { statSync } from "fs";
 import { WriteQueue } from "./write-queue.ts";
 import { RetryPolicy, DEFAULT_RETRY_CONFIG } from "./retry-policy.ts";
 import { TransactionManager, type TransactionContext } from "./transaction-manager.ts";
@@ -284,9 +285,12 @@ export class BunQL {
       const row = this.#db
         .prepare(`PRAGMA wal_checkpoint(${modeMap[mode]})`)
         .get() as Record<string, number>;
+      const pageSize = (this.#db
+        .prepare("PRAGMA page_size")
+        .get() as Record<string, number>)?.["page_size"] ?? 4096;
       return {
-        pagesCheckpointed: row?.[1] ?? 0,
-        walSizeBytes: 0,
+        pagesCheckpointed: row?.[2] ?? 0,
+        walSizeBytes: (row?.[1] ?? 0) * pageSize,
       };
     });
   }
@@ -301,16 +305,16 @@ export class BunQL {
       const pageCount = (this.#db
         .prepare("PRAGMA page_count")
         .get() as Record<string, number>)?.["page_count"] ?? 0;
-      const walSizePages = (this.#db
+      const row = this.#db
         .prepare("PRAGMA wal_checkpoint(0)")
-        .get() as Record<string, number>)?.[1] ?? 0;
+        .get() as Record<string, number>;
 
       return {
-        walSizePages,
+        walSizePages: row?.[1] ?? 0,
         pageSize,
         pageCount,
-        checkpointRequired: walSizePages > 100,
-        lastCheckpointPages: 0,
+        checkpointRequired: (row?.[1] ?? 0) > 100,
+        lastCheckpointPages: row?.[2] ?? 0,
       };
     });
   }
@@ -323,7 +327,8 @@ export class BunQL {
       this.#db.exec(`VACUUM INTO '${path.replace(/'/g, "''")}'`);
     });
 
-    return { size: 0, durationMs: performance.now() - start };
+    const { size } = statSync(path);
+    return { size, durationMs: performance.now() - start };
   }
 
   async close(): Promise<void> {

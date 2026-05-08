@@ -352,6 +352,7 @@ describe("BunQL", () => {
     const result = await db.backup(backupPath);
 
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
+    expect(result.size).toBeGreaterThan(0);
 
     // Verify backup is readable
     const { Database } = await import("bun:sqlite");
