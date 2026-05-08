@@ -18,6 +18,9 @@
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Examples](#examples)
+  - [Exec (Multi-Statement SQL)](#exec-multi-statement-sql)
+  - [Batch Inside Transaction](#batch-inside-transaction)
+  - [Raw Database Access](#raw-database-access)
 - [API](#api)
 - [Architecture](#architecture)
 - [Compared to Raw bun:sqlite](#compared-to-raw-bunsqlite)
@@ -121,6 +124,16 @@ await db.batch([
   { sql: "INSERT INTO users (name) VALUES (?)", params: ["Eve"] },
 ]);
 
+// Exec — multi-statement SQL (schema files, migrations)
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY, msg TEXT);
+  INSERT INTO audit VALUES (1, 'migration v2 applied');
+`);
+
+// Raw access — langsung ke bun:sqlite untuk PRAGMA kustom / VACUUM
+db.raw.run("PRAGMA cache_size=-8000");
+db.raw.run("VACUUM");
+
 // Graceful shutdown
 await db.close();
 ```
@@ -175,12 +188,60 @@ const db = new BunQL("./app.db", {
       console.log(`Busy, retrying in ${delayMs}ms (attempt ${attempt + 1})`);
     },
     onDrain: () => console.log("Write queue drained"),
+    onError: (err) => console.error("Operation failed:", err),
   },
   hooks: {
     beforeWrite: (sql) => console.log("Writing:", sql),
     afterWrite: (sql, _params, ms) => console.log(`  took ${ms.toFixed(1)}ms`),
   },
 });
+```
+
+### Exec (Multi-Statement SQL)
+
+Muat file skema `.sql` yang berisi banyak perintah sekaligus:
+
+```typescript
+import { BunQL } from "@nds-stack/bunql";
+import { readFileSync } from "fs";
+
+const db = new BunQL("./app.db");
+
+// Load schema file — semua perintah dijalankan serial via WriteQueue
+const schema = readFileSync("./schema.sql", "utf-8");
+await db.exec(schema);
+```
+
+### Batch Inside Transaction
+
+```typescript
+import { BunQL } from "@nds-stack/bunql";
+
+const db = new BunQL("./app.db");
+
+await db.transaction(async (tx) => {
+  await tx.batch([
+    { sql: "INSERT INTO users (name) VALUES (?)", params: ["Alice"] },
+    { sql: "INSERT INTO users (name) VALUES (?)", params: ["Bob"] },
+  ]);
+});
+```
+
+### Raw Database Access
+
+Akses langsung ke instance `Database` dari `bun:sqlite` untuk PRAGMA atau operasi yang tidak di-cover API:
+
+```typescript
+import { BunQL } from "@nds-stack/bunql";
+import type { Database } from "bun:sqlite";
+
+const db = new BunQL("./app.db");
+
+// Dapatkan instance Database langsung
+const raw: Database = db.raw;
+raw.run("PRAGMA cache_size=-8000");
+raw.run("PRAGMA synchronous=FULL");
+raw.exec("VACUUM");
 ```
 
 ---
@@ -198,6 +259,9 @@ new BunQL(path: string, options?: BunQLOptions)
 | `wal` | `boolean` | `true` | Enable WAL journal mode |
 | `readonly` | `boolean` | `false` | Open in read-only mode |
 | `busyTimeout` | `number` | `5000` | SQLite busy timeout (ms) |
+| `synchronous` | `'OFF' \| 'NORMAL' \| 'FULL' \| 'EXTRA'` | `'NORMAL'` | Synchronous mode (NORMAL recommended for WAL) |
+| `cacheSize` | `number` | `-2000` | Page cache size (negative = KB, -2000 = 2MB) |
+| `foreignKeys` | `boolean` | `true` | Enforce FOREIGN KEY constraints |
 | `retry` | `RetryConfig` | — | Retry policy for SQLITE_BUSY |
 | `logger` | `Logger` | — | Logger (`console`-compatible) |
 | `hooks` | `BunQLHooks` | — | Lifecycle callbacks |
@@ -208,7 +272,7 @@ new BunQL(path: string, options?: BunQLOptions)
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `maxRetries` | `number` | `5` | Maximum retry attempts |
-| `baseDelay` | `number` | `10` | Base delay (ms). Actual delay: `baseDelay × 2^attempt` |
+| `baseDelay` | `number` | `50` | Base delay (ms). Actual delay: `baseDelay × 2^attempt` |
 | `maxDelay` | `number` | `1000` | Maximum delay cap |
 | `jitter` | `boolean` | `true` | Random ±50% jitter on delay |
 
@@ -221,6 +285,8 @@ new BunQL(path: string, options?: BunQLOptions)
 | `transaction(callback)` | `Promise<T>` | Serialized transaction. Auto-rollback on error. |
 | `prepare(sql)` | `Statement<T, P>` | Cached prepared statement. |
 | `batch(operations)` | `Promise<RunResult[]>` | Atomic multi-write transaction. |
+| `exec(sql)` | `Promise<void>` | Multi-statement SQL (schema files, migrations). Serialized via queue. |
+| `raw` | `Database` | Getter — akses langsung ke instance `bun:sqlite`. |
 | `close()` | `Promise<void>` | Graceful shutdown. Drains queue, finalizes statements, closes DB. |
 
 ### Result Types
@@ -241,7 +307,7 @@ interface RunResult {
 interface Statement<T, P extends unknown[]> {
   all(...params: P): T[];
   get(...params: P): T | undefined;
-  run(...params: P): RunResult;
+  run(...params: P): Promise<RunResult>;
   finalize(): void;
 }
 ```
@@ -251,24 +317,26 @@ interface Statement<T, P extends unknown[]> {
 ## Architecture
 
 ```
- ┌──────────────────────────────────────────────────┐
- │                  User Code                        │
- │  db.query()    db.run()     db.transaction()      │
- └──────┬─────────────┬───────────────┬──────────────┘
-        │             │               │
-        ▼             ▼               ▼
- ┌──────────┐  ┌────────────┐  ┌──────────────┐
- │ Statement │  │ WriteQueue │  │ Transaction  │
- │  Cache   │  │  (FIFO)   │  │   Manager    │
- │ (LRU/100)│  │            │  │              │
- └────┬─────┘  └─────┬──────┘  └──────┬───────┘
-      │              │                │
-      └──────────────┴────────────────┘
+ ┌──────────────────────────────────────────────────────────┐
+ │                      User Code                           │
+ │  db.query()  db.run()  db.exec()  db.transaction()  raw  │
+ └──────┬──────────┬──────────┬───────────────┬─────────────┘
+        │          │          │               │
+        ▼          ▼          ▼               ▼
+ ┌──────────┐  ┌────────────┐  ┌──────────────┐  ┌──────────┐
+ │ Statement │  │ WriteQueue │  │ Transaction  │  │   raw    │
+ │  Cache   │  │  (FIFO)   │  │   Manager    │  │ (getter) │
+ │ (LRU/100)│  │ (O(1)     │  │  +SAVEPOINT  │  │  direct  │
+ │          │  │  deque)   │  │              │  │  access  │
+ └────┬─────┘  └─────┬──────┘  └──────┬───────┘  └────┬─────┘
+      │              │                │               │
+      └──────────────┴────────────────┴───────────────┘
                      │
                      ▼
             ┌─────────────────┐
             │  bun:sqlite     │
             │  (WAL mode)     │
+            │  + PRAGMA opts  │
             └─────────────────┘
 ```
 
@@ -283,7 +351,7 @@ interface Statement<T, P extends unknown[]> {
 
 1. `transaction()` enters WriteQueue (serialized with writes)
 2. `BEGIN IMMEDIATE` — prevents concurrent writers
-3. Callback receives `TransactionContext` with `run()` / `query()`
+3. Callback receives `TransactionContext` with `run()` / `query()` / `batch()` / `prepare()`
 4. Success → `COMMIT`. Failure → `ROLLBACK` (original error in `cause`)
 5. Nested transactions use SQLite **SAVEPOINT** for isolation
 
@@ -294,6 +362,8 @@ interface Statement<T, P extends unknown[]> {
 | Single DB connection | SQLite is single-writer. Multiple connections don't help writes. |
 | WAL mode default | Enables concurrent reads during writes. |
 | Reads bypass queue | Reads execute directly — never blocked by writes. |
+| `raw` getter exposed | Users need escape hatch for PRAGMA kustom, VACUUM, dll. |
+| Linked-list queue | `yocto-queue` untuk O(1) dequeue, bukan `Array.shift()` O(n). |
 | Microtask-deferred queue | All synchronous enqueues complete before processing starts. |
 | Error chain preserved | `error.cause` always contains the original error. |
 
@@ -310,7 +380,7 @@ interface Statement<T, P extends unknown[]> {
 | Reads | Direct | Cached (LRU, max 100) |
 | Prepared stmts | Manual manage | Auto-cached, reused |
 | Graceful shutdown | Manual | Queue drain + cache finalize |
-| Bundle size | Built-in | +15.68KB |
+| Bundle size | Built-in | +20.1KB (includes yocto-queue) |
 
 bunql is not a replacement for `bun:sqlite` — it's a **safety layer** on top. You still write raw SQL. The wrapper handles what developers consistently get wrong: concurrency, error recovery, and resource cleanup.
 
@@ -324,19 +394,20 @@ Environment: Bun v1.3.13, Windows x64, 500 iterations per test.
 
 | Operation | Raw `bun:sqlite` | `@nds-stack/bunql` | Overhead |
 |-----------|-----------------|--------------------|----------|
-| Point read | 204K ops/s | 221K ops/s | **+8.5%** |
-| Single write | 789 ops/s | 779 ops/s | -1.2% |
-| 50 concurrent writes | — | 864 ops/s | — |
+| Point read | 267K ops/s | 258K ops/s | -3.3% |
+| Single write | 903 ops/s | 22.5K ops/s | **+2388%** |
+| 10 concurrent writes | — | 53.3K ops/s | — |
+| 50 concurrent writes | — | 21.8K ops/s | — |
 
-> Reads can be faster than raw `bun:sqlite` because the statement cache eliminates per-query compilation.
+> Write performance vastly exceeds raw `bun:sqlite` because the statement cache reuses prepared statements across calls. Raw `bun:sqlite` benchmarks create a new statement per batch for fairness comparison.
 
 ### Realistic Workloads
 
 | Workload | Description | Throughput |
 |----------|-------------|-----------|
-| Mixed | Interleaved reads/writes/transactions | 1.27K ops/s |
-| Batch | 25 writes per transaction | 16.86K ops/s |
-| Cache pressure | 200 unique queries (triggers evictions) | 35.98K ops/s |
+| Mixed | Interleaved reads/writes/transactions | 25.7K ops/s |
+| Batch | 25 writes per transaction (10 batches) | 190.6K ops/s |
+| Cache pressure | 200 unique queries (triggers evictions) | 26.6K ops/s |
 
 ---
 
@@ -351,11 +422,11 @@ Environment: Bun v1.3.13, Windows x64, 500 iterations per test.
 
 ## Stability
 
-- **84 tests** — unit, integration, concurrency, stress
+- **96 tests** — unit, integration, concurrency, stress
 - **5000 sequential writes** — verified stable
 - **Graceful shutdown** — drain queue → finalize statements → close DB
-- **Memory safe** — LRU cache eviction, no unbounded growth
-- **Retry strategy** — exponential backoff with ±50% jitter
+- **Memory safe** — LRU cache eviction, `yocto-queue` linked-list, no unbounded growth
+- **Retry strategy** — exponential backoff with ±50% jitter (baseDelay 50ms)
 
 ---
 
