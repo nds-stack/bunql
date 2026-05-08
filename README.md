@@ -414,7 +414,7 @@ Both benchmarks use identical PRAGMA settings: `WAL`, `synchronous=NORMAL`, `cac
 
 ## Limitations
 
-- **SQLite single-writer** — bunql queues writes, but peak throughput is bound by SQLite (~800-1000 writes/s on typical hardware).
+- **SQLite single-writer** — bunql queues writes, but peak throughput depends on PRAGMA settings. With `synchronous=NORMAL`, `cache_size=-2000`, and statement cache, typical hardware achieves **18-30K writes/s**. Using `synchronous=FULL` (SQLite default) reduces this significantly.
 - **Fixed-size statement cache** — Max 100 cached statements. Highly diverse workloads trigger evictions.
 - **Single-process only** — Not designed for multi-process writes to the same SQLite file.
 - **Not an ORM** — No schema management, query building, or migrations. You write SQL.
