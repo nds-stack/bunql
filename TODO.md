@@ -1,6 +1,6 @@
 # bunql — TODO & Roadmap
 
-**Current Version:** `0.1.0-alpha.1`
+**Current Version:** `0.1.0-alpha.2`
 
 **Status:** Core features (M0-M5) complete. Remaining work: M6 (stress test automation), M7 (benchmark results doc), M8 (polish & publish).
 

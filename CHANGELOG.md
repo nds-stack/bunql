@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-alpha.2] - 2026-05-08
+
+### Performance
+- Replace `Array.shift()` with `yocto-queue` (linked-list) for O(1) dequeue in WriteQueue
+- Reuse `StatementCache` for `run()` and `batch()` — no more per-call `prepare()`/`finalize()`
+
+### Changed
+- `RetryPolicy` default `baseDelay` increased from 10ms to 50ms for better SQLITE_BUSY tolerance
+
+### Dependencies
+- Added `yocto-queue@^0.1.0` as runtime dependency
+
 ## [0.1.0-alpha.1] - 2026-05-08
 
 ### Added
