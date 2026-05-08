@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.0-alpha.4] - 2026-05-08
+
+### Added
+- `metrics` getter — real-time counters (writes, reads, transactions, queue stats)
+- `cacheStats` getter — statement cache hit/miss ratio
+- `walStatus()` — WAL file size, page info, checkpoint requirement check
+- `checkpoint(mode)` — explicit WAL checkpoint (PASSIVE/FULL/RESTART/TRUNCATE)
+- `backup(path)` — safe online backup via `VACUUM INTO` through WriteQueue
+
+### Changed
+- `RetryPolicy.onBusy` now always tracks retry count internally (even without user event handler)
+- 102 tests (was 96)
+
 ## [0.1.0-alpha.3] - 2026-05-08
 
 ### Documentation

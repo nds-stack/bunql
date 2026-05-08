@@ -14,9 +14,19 @@ export class WriteQueue {
   #drainPromise: Promise<void> | null = null;
   #drainResolve: (() => void) | null = null;
   #onDrain: (() => void) | null = null;
+  #peakSize = 0;
+  #totalEnqueued = 0;
 
   get size(): number {
     return this.#items.size;
+  }
+
+  get peakSize(): number {
+    return this.#peakSize;
+  }
+
+  get totalEnqueued(): number {
+    return this.#totalEnqueued;
   }
 
   get isProcessing(): boolean {
@@ -40,6 +50,10 @@ export class WriteQueue {
 
     return new Promise<T>((resolve, reject) => {
       this.#items.enqueue({ execute, resolve: resolve as (value: unknown) => void, reject });
+      this.#totalEnqueued++;
+      if (this.#items.size > this.#peakSize) {
+        this.#peakSize = this.#items.size;
+      }
       if (!this.#processing) {
         this.#processing = true;
         queueMicrotask(() => this.#process());

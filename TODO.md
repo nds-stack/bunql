@@ -1,10 +1,19 @@
 # bunql — TODO & Roadmap
 
-**Current Version:** `0.1.0-alpha.3`
+**Current Version:** `0.1.0-alpha.4`
 
-**Status:** Core features (M0-M5) complete. Remaining work: M6 (stress test automation), M7 (benchmark results doc), M8 (polish & publish).
+**Status:** Core features (M0-M5) complete. Observability & data safety features added.
 
 ---
+
+## ✅ Completed in v0.1.0-alpha.4
+
+- `metrics` getter — write/read/transaction/queue counters for production monitoring
+- `cacheStats` getter — statement cache hit rate
+- `walStatus()` — WAL file size, page info, checkpoint detection
+- `checkpoint(mode)` — explicit WAL checkpoint control
+- `backup(path)` — online backup via `VACUUM INTO` (safe, queue-aware)
+- 102 tests (was 96)
 
 ## ✅ Completed in v0.1.0-alpha.1
 

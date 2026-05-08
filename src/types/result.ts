@@ -16,3 +16,37 @@ export interface Statement<T = unknown, P extends unknown[] = unknown[]> {
   run(...params: P): Promise<RunResult>;
   finalize(): void;
 }
+
+export interface BunQLMetrics {
+  writes: { total: number; failed: number; retried: number };
+  reads: { total: number };
+  queue: { currentSize: number; peakSize: number; totalEnqueued: number };
+  transactions: { committed: number; rolledBack: number };
+}
+
+export interface CacheStats {
+  size: number;
+  hits: number;
+  misses: number;
+  hitRate: number;
+}
+
+export type CheckpointMode = "PASSIVE" | "FULL" | "RESTART" | "TRUNCATE";
+
+export interface CheckpointResult {
+  pagesCheckpointed: number;
+  walSizeBytes: number;
+}
+
+export interface WalStatus {
+  walSizePages: number;
+  pageSize: number;
+  pageCount: number;
+  checkpointRequired: boolean;
+  lastCheckpointPages: number;
+}
+
+export interface BackupResult {
+  size: number;
+  durationMs: number;
+}

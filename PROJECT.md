@@ -57,6 +57,11 @@ bunql
 │   ├── .batch()            ← Batch write operations
 │   ├── .exec()             ← Multi-statement SQL (via WriteQueue)
 │   ├── .raw                ← Getter: akses langsung Database bun:sqlite
+│   ├── .metrics            ← Getter: real-time operation counters
+│   ├── .cacheStats         ← Getter: statement cache hit rate
+│   ├── .walStatus()        ← WAL file & checkpoint status
+│   ├── .checkpoint()       ← Explicit WAL checkpoint
+│   ├── .backup()           ← Online backup via VACUUM INTO
 │   └── .close()            ← Graceful shutdown
 │
 ├── WriteQueue              ← Serialisasi semua write operations
@@ -88,17 +93,22 @@ bunql
 User Code
     │
     ▼
-┌───────────────────────────────────────────┐
-│  BunQL (Facade)                           │
-│                                           │
-│  .query()   ───► bun:sqlite (direct)     │ ← Reads: parallel, no queue
-│  .run()     ───► WriteQueue ──► DB        │ ← Writes: serialized
-│  .exec()    ───► WriteQueue ──► DB        │ ← Multi-stmt: serialized
-│  .prepare() ───► StatementCache ──► DB    │ ← Reads: cache hit, Writes: queue
-│  .transaction() ──► TxManager ──► DB      │ ← Transactions: serialized
-│  .batch()   ───► WriteQueue ──► DB        │ ← Batch: serialized + atomic
-│  .raw       ───► Database (direct)        │ ← Direct access (getter)
-└───────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│  BunQL (Facade)                              │
+│                                              │
+│  .query()        ───► bun:sqlite (direct)   │ ← Reads: parallel, no queue
+│  .run()          ───► WriteQueue ──► DB      │ ← Writes: serialized
+│  .exec()         ───► WriteQueue ──► DB      │ ← Multi-stmt: serialized
+│  .prepare()      ───► StatementCache ──► DB  │ ← Reads: cache, Writes: queue
+│  .transaction()  ───► TxManager ──► DB       │ ← Transactions: serialized
+│  .batch()        ───► WriteQueue ──► DB      │ ← Batch: serialized + atomic
+│  .raw            ───► Database (direct)      │ ← Direct access (getter)
+│  .metrics        ───► Internal counters      │ ← Real-time observability
+│  .cacheStats     ───► StatementCache stats   │ ← Cache efficiency
+│  .walStatus()    ───► PRAGMA queries         │ ← WAL health
+│  .checkpoint()   ───► WriteQueue ──► DB      │ ← WAL checkpoint control
+│  .backup()       ───► WriteQueue ──► DB      │ ← Online backup
+└──────────────────────────────────────────────┘
 ```
 
 ### Key Design Decisions
@@ -225,6 +235,53 @@ const db = new BunQL("./app.db", {
     jitter: true,
   },
 });
+```
+
+### Metrics
+
+```typescript
+const m = db.metrics;
+console.log(m.writes.total);        // Total writes executed
+console.log(m.writes.failed);       // Failed writes
+console.log(m.writes.retried);      // Retry count
+console.log(m.reads.total);         // Total reads
+console.log(m.transactions.committed);
+console.log(m.transactions.rolledBack);
+console.log(m.queue.currentSize);   // Current queue depth
+console.log(m.queue.peakSize);      // Peak queue depth
+console.log(m.queue.totalEnqueued); // Total queued operations
+```
+
+### Cache Stats
+
+```typescript
+const s = db.cacheStats;
+console.log(s.size);     // Number of cached statements
+console.log(s.hits);     // Cache hits
+console.log(s.misses);   // Cache misses
+console.log(s.hitRate);  // Ratio (0-1)
+```
+
+### WAL Management
+
+```typescript
+// Check WAL status
+const status = await db.walStatus();
+console.log(status.walSizePages);
+console.log(status.pageCount);
+console.log(status.checkpointRequired);
+
+// Manual checkpoint
+await db.checkpoint("TRUNCATE");
+await db.checkpoint("PASSIVE");
+await db.checkpoint("FULL");
+```
+
+### Backup
+
+```typescript
+const result = await db.backup("./safety-copy.db");
+console.log(`Backup completed in ${result.durationMs}ms`);
 ```
 
 ### Close

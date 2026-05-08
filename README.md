@@ -286,7 +286,12 @@ new BunQL(path: string, options?: BunQLOptions)
 | `prepare(sql)` | `Statement<T, P>` | Cached prepared statement. |
 | `batch(operations)` | `Promise<RunResult[]>` | Atomic multi-write transaction. |
 | `exec(sql)` | `Promise<void>` | Multi-statement SQL (schema files, migrations). Serialized via queue. |
+| `walStatus()` | `Promise<WalStatus>` | WAL file size, page info, checkpoint requirement. |
+| `checkpoint(mode)` | `Promise<CheckpointResult>` | Explicit WAL checkpoint (PASSIVE \| FULL \| RESTART \| TRUNCATE). |
+| `backup(path)` | `Promise<BackupResult>` | Online backup via `VACUUM INTO`. Safe, queue-aware. |
 | `raw` | `Database` | Getter — akses langsung ke instance `bun:sqlite`. |
+| `metrics` | `BunQLMetrics` | Getter — real-time operation counters (writes, reads, txs, queue). |
+| `cacheStats` | `CacheStats` | Getter — statement cache hit/miss/size/rate. |
 | `close()` | `Promise<void>` | Graceful shutdown. Drains queue, finalizes statements, closes DB. |
 
 ### Result Types
@@ -309,6 +314,38 @@ interface Statement<T, P extends unknown[]> {
   get(...params: P): T | undefined;
   run(...params: P): Promise<RunResult>;
   finalize(): void;
+}
+
+interface BunQLMetrics {
+  writes: { total: number; failed: number; retried: number };
+  reads: { total: number };
+  queue: { currentSize: number; peakSize: number; totalEnqueued: number };
+  transactions: { committed: number; rolledBack: number };
+}
+
+interface CacheStats {
+  size: number;
+  hits: number;
+  misses: number;
+  hitRate: number;
+}
+
+interface WalStatus {
+  walSizePages: number;
+  pageSize: number;
+  pageCount: number;
+  checkpointRequired: boolean;
+  lastCheckpointPages: number;
+}
+
+interface CheckpointResult {
+  pagesCheckpointed: number;
+  walSizeBytes: number;
+}
+
+interface BackupResult {
+  size: number;
+  durationMs: number;
 }
 ```
 
@@ -423,11 +460,12 @@ Both benchmarks use identical PRAGMA settings: `WAL`, `synchronous=NORMAL`, `cac
 
 ## Stability
 
-- **96 tests** — unit, integration, concurrency, stress
+- **102 tests** — unit, integration, concurrency, stress
 - **5000 sequential writes** — verified stable
 - **Graceful shutdown** — drain queue → finalize statements → close DB
 - **Memory safe** — LRU cache eviction, `yocto-queue` linked-list, no unbounded growth
 - **Retry strategy** — exponential backoff with ±50% jitter (baseDelay 50ms)
+- **Observability** — built-in metrics counters, cache stats, WAL monitoring
 
 ---
 

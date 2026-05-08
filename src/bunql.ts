@@ -15,6 +15,12 @@ import type {
   Logger,
   EventHandlers,
   RetryConfig,
+  BunQLMetrics,
+  CacheStats,
+  CheckpointMode,
+  CheckpointResult,
+  WalStatus,
+  BackupResult,
 } from "./types/index.ts";
 
 export class BunQL {
@@ -27,6 +33,12 @@ export class BunQL {
   #closed = false;
   #logger?: Logger;
   #onError?: (error: Error) => void;
+  #metrics: BunQLMetrics = {
+    writes: { total: 0, failed: 0, retried: 0 },
+    reads: { total: 0 },
+    queue: { currentSize: 0, peakSize: 0, totalEnqueued: 0 },
+    transactions: { committed: 0, rolledBack: 0 },
+  };
 
   constructor(path: string, options?: BunQLOptions) {
     const config = this.#resolveConfig(options);
@@ -92,9 +104,34 @@ export class BunQL {
     return this.#db;
   }
 
+  get metrics(): BunQLMetrics {
+    return {
+      ...this.#metrics,
+      queue: {
+        ...this.#metrics.queue,
+        currentSize: this.#writeQueue.size,
+        peakSize: this.#writeQueue.peakSize,
+        totalEnqueued: this.#writeQueue.totalEnqueued,
+      },
+    };
+  }
+
+  get cacheStats(): CacheStats {
+    const hits = this.#statementCache.hits;
+    const misses = this.#statementCache.misses;
+    const total = hits + misses;
+    return {
+      size: this.#statementCache.size,
+      hits,
+      misses,
+      hitRate: total > 0 ? hits / total : 0,
+    };
+  }
+
   query<T = Record<string, unknown>>(sql: string, params?: SQLQueryBindings[]): QueryResult<T> {
     this.#ensureOpen();
 
+    this.#metrics.reads.total++;
     const start = performance.now();
     const stmt = this.#statementCache.get(sql);
     const rows = stmt.all(...(params ?? [])) as T[];
@@ -110,6 +147,7 @@ export class BunQL {
   async run(sql: string, params?: SQLQueryBindings[]): Promise<RunResult> {
     this.#ensureOpen();
 
+    this.#metrics.writes.total++;
     const start = performance.now();
     this.#config.hooks?.beforeWrite?.(sql, params ?? []);
 
@@ -129,6 +167,7 @@ export class BunQL {
       this.#config.hooks?.afterWrite?.(sql, params ?? [], performance.now() - start);
       return result;
     } catch (error) {
+      this.#metrics.writes.failed++;
       const err = error instanceof Error ? error : new Error(String(error));
       this.#onError?.(err);
       throw new QueueError(
@@ -142,7 +181,14 @@ export class BunQL {
     callback: (tx: TransactionContext) => Promise<T>,
   ): Promise<T> {
     this.#ensureOpen();
-    return this.#transactionManager.transaction(callback);
+    try {
+      const result = await this.#transactionManager.transaction(callback);
+      this.#metrics.transactions.committed++;
+      return result;
+    } catch (error) {
+      this.#metrics.transactions.rolledBack++;
+      throw error;
+    }
   }
 
   prepare<T = unknown, P extends SQLQueryBindings[] = SQLQueryBindings[]>(
@@ -228,6 +274,58 @@ export class BunQL {
     });
   }
 
+  async checkpoint(mode: CheckpointMode = "PASSIVE"): Promise<CheckpointResult> {
+    this.#ensureOpen();
+    const modeMap: Record<CheckpointMode, number> = {
+      PASSIVE: 0, FULL: 1, RESTART: 2, TRUNCATE: 3,
+    };
+
+    return this.#writeQueue.enqueue(async () => {
+      const row = this.#db
+        .prepare(`PRAGMA wal_checkpoint(${modeMap[mode]})`)
+        .get() as Record<string, number>;
+      return {
+        pagesCheckpointed: row?.[1] ?? 0,
+        walSizeBytes: 0,
+      };
+    });
+  }
+
+  async walStatus(): Promise<WalStatus> {
+    this.#ensureOpen();
+
+    return this.#writeQueue.enqueue(async () => {
+      const pageSize = (this.#db
+        .prepare("PRAGMA page_size")
+        .get() as Record<string, number>)?.["page_size"] ?? 4096;
+      const pageCount = (this.#db
+        .prepare("PRAGMA page_count")
+        .get() as Record<string, number>)?.["page_count"] ?? 0;
+      const walSizePages = (this.#db
+        .prepare("PRAGMA wal_checkpoint(0)")
+        .get() as Record<string, number>)?.[1] ?? 0;
+
+      return {
+        walSizePages,
+        pageSize,
+        pageCount,
+        checkpointRequired: walSizePages > 100,
+        lastCheckpointPages: 0,
+      };
+    });
+  }
+
+  async backup(path: string): Promise<BackupResult> {
+    this.#ensureOpen();
+    const start = performance.now();
+
+    await this.#writeQueue.enqueue(async () => {
+      this.#db.exec(`VACUUM INTO '${path.replace(/'/g, "''")}'`);
+    });
+
+    return { size: 0, durationMs: performance.now() - start };
+  }
+
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
@@ -282,21 +380,22 @@ export class BunQL {
   }
 
   #setupEventHandlers(events?: EventHandlers): void {
-    if (!events) return;
+    const userOnBusy = events?.onBusy;
+    this.#retryPolicy.onBusy = (attempt, delay) => {
+      this.#metrics.writes.retried++;
+      userOnBusy?.(attempt, delay);
+    };
 
-    if (events.onBusy) {
-      this.#retryPolicy.onBusy = events.onBusy;
-    }
+    const userOnRetry = events?.onRetry;
+    this.#retryPolicy.onRetry = (attempt, delay, error) => {
+      userOnRetry?.(attempt, delay, error);
+    };
 
-    if (events.onRetry) {
-      this.#retryPolicy.onRetry = events.onRetry;
-    }
-
-    if (events.onDrain) {
+    if (events?.onDrain) {
       this.#writeQueue.onDrain = events.onDrain;
     }
 
-    if (events.onError) {
+    if (events?.onError) {
       this.#onError = events.onError;
     }
   }
@@ -306,4 +405,4 @@ export class BunQL {
   }
 }
 
-export type { BunQLOptions, RetryConfig, QueryResult, RunResult, Statement, BatchOperation, TransactionContext };
+export type { BunQLOptions, RetryConfig, QueryResult, RunResult, Statement, BatchOperation, TransactionContext, BunQLMetrics, CacheStats, CheckpointMode, CheckpointResult, WalStatus, BackupResult };

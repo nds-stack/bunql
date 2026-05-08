@@ -12,4 +12,10 @@ export type {
   QueryResult,
   RunResult,
   Statement,
+  BunQLMetrics,
+  CacheStats,
+  CheckpointMode,
+  CheckpointResult,
+  WalStatus,
+  BackupResult,
 } from "./result.ts";

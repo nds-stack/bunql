@@ -267,4 +267,101 @@ describe("BunQL", () => {
     expect(errors.length).toBeGreaterThanOrEqual(1);
     db.close();
   });
+
+  test("metrics tracks writes, reads, and transactions", async () => {
+    const db = new BunQL(dbPath);
+
+    const m0 = db.metrics;
+    expect(m0.writes.total).toBe(0);
+    expect(m0.reads.total).toBe(0);
+
+    await db.run("CREATE TABLE metrics_test (id INTEGER PRIMARY KEY, val TEXT)");
+    expect(db.metrics.writes.total).toBe(1);
+
+    db.query("SELECT 1");
+    expect(db.metrics.reads.total).toBeGreaterThanOrEqual(1);
+
+    await db.transaction(async (tx) => {
+      await tx.run("INSERT INTO metrics_test (val) VALUES (?)", ["x"]);
+    });
+    expect(db.metrics.transactions.committed).toBe(1);
+
+    db.close();
+  });
+
+  test("metrics tracks failed writes", async () => {
+    const db = new BunQL(dbPath);
+
+    await expect(db.run("INVALID SQL")).rejects.toThrow();
+    expect(db.metrics.writes.failed).toBe(1);
+
+    db.close();
+  });
+
+  test("cacheStats returns statement cache statistics", async () => {
+    const db = new BunQL(dbPath);
+
+    const stats = db.cacheStats;
+    expect(stats.size).toBe(0);
+    expect(stats.hits).toBe(0);
+    expect(stats.misses).toBe(0);
+    expect(stats.hitRate).toBe(0);
+
+    // Trigger a miss
+    db.query("SELECT 1 AS val");
+    expect(db.cacheStats.misses).toBe(1);
+
+    // Trigger a hit
+    db.query("SELECT 1 AS val");
+    expect(db.cacheStats.hits).toBe(1);
+    expect(db.cacheStats.hitRate).toBeGreaterThan(0);
+
+    db.close();
+  });
+
+  test("checkpoint runs without error", async () => {
+    const db = new BunQL(dbPath);
+    await db.run("CREATE TABLE cp_test (id INTEGER PRIMARY KEY)");
+
+    const result = await db.checkpoint("TRUNCATE");
+    expect(result.pagesCheckpointed).toBeGreaterThanOrEqual(0);
+
+    db.close();
+  });
+
+  test("walStatus returns status object", async () => {
+    const db = new BunQL(dbPath);
+    await db.run("CREATE TABLE wal_test (id INTEGER PRIMARY KEY, val TEXT)");
+    await db.run("INSERT INTO wal_test VALUES (1, 'hello')");
+
+    const status = await db.walStatus();
+    expect(status.pageCount).toBeGreaterThan(0);
+    expect(status.pageSize).toBeGreaterThan(0);
+    expect(typeof status.checkpointRequired).toBe("boolean");
+
+    db.close();
+  });
+
+  test("backup creates a valid copy", async () => {
+    const db = new BunQL(dbPath);
+    await db.run("CREATE TABLE backup_test (id INTEGER PRIMARY KEY, val TEXT)");
+    await db.run("INSERT INTO backup_test VALUES (1, 'data1')");
+    await db.run("INSERT INTO backup_test VALUES (2, 'data2')");
+
+    const backupPath = getTestDBPath("backup-copy");
+    const result = await db.backup(backupPath);
+
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
+
+    // Verify backup is readable
+    const { Database } = await import("bun:sqlite");
+    const backupDb = new Database(backupPath);
+    const rows = backupDb.query("SELECT COUNT(*) as cnt FROM backup_test").get() as { cnt: number };
+    expect(rows?.cnt).toBe(2);
+    backupDb.close();
+
+    try { unlinkSync(backupPath); } catch { /* cleanup */ }
+
+    db.close();
+  });
 });

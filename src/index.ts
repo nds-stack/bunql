@@ -7,6 +7,12 @@ export type {
   Statement,
   BatchOperation,
   TransactionContext,
+  BunQLMetrics,
+  CacheStats,
+  CheckpointMode,
+  CheckpointResult,
+  WalStatus,
+  BackupResult,
 } from "./bunql.ts";
 
 export {
