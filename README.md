@@ -395,12 +395,12 @@ Both benchmarks use identical PRAGMA settings: `WAL`, `synchronous=NORMAL`, `cac
 
 | Operation | Raw `bun:sqlite` | `@nds-stack/bunql` | Overhead |
 |-----------|-----------------|--------------------|----------|
-| Point read | 142K ops/s | 234K ops/s | **+64.7%** |
-| Single write | 32.0K ops/s | 21.7K ops/s | -32.3% |
-| 10 concurrent writes | — | 50.4K ops/s | — |
-| 50 concurrent writes | — | 25.8K ops/s | — |
+| Point read | 349K ops/s | 188K ops/s | -45.9% |
+| Single write | 30.8K ops/s | 18.9K ops/s | -38.6% |
+| 10 concurrent writes | 51.9K ops/s * | 32.8K ops/s | -36.8% |
+| 50 concurrent writes | 25.6K ops/s * | 23.1K ops/s | -9.8% |
 
-> Reads benefit from statement cache (LRU, max 100). Writes have ~32% overhead from queue serialization — the cost of guaranteed `SQLITE_BUSY`-free concurrency.
+> \* Raw concurrent benchmark includes manual retry logic with exponential backoff (same strategy as BunQL). Without retry, raw `bun:sqlite` would throw `SQLITE_BUSY`. BunQL eliminates the need for manual retry entirely — writes are serialized, reads are parallel. The overhead is the cost of guaranteed-safe concurrency.
 
 ### Realistic Workloads
 

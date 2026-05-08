@@ -48,8 +48,26 @@ async function benchRawSQLite(path: string) {
   for (let i = 0; i < BENCH_ITERATIONS; i++) insert.run(`write-${i}`);
   const writeOps = (BENCH_ITERATIONS / (performance.now() - writeStart)) * 1000;
 
+  const concurrentWrite: Record<number, number> = {};
+  for (const level of CONCURRENCY_LEVELS) {
+    const start = performance.now();
+    await Promise.all(Array.from({ length: BENCH_ITERATIONS }, (_, i) =>
+      (async () => {
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            insert.run(`raw-concurrent-${level}-${i}`);
+            return;
+          } catch {
+            await Bun.sleep(10 * Math.pow(2, attempt));
+          }
+        }
+      })(),
+    ));
+    concurrentWrite[level] = (BENCH_ITERATIONS / (performance.now() - start)) * 1000;
+  }
+
   db.close();
-  return { read: readOps, write: writeOps };
+  return { read: readOps, write: writeOps, concurrentWrite };
 }
 
 async function benchBunQL(path: string) {
@@ -173,11 +191,11 @@ async function main(): Promise<void> {
   console.log(`  Read overhead:  ${(((bql.read - raw.read) / raw.read) * 100).toFixed(1)}%`);
   console.log(`  Write overhead: ${(((bql.write - raw.write) / raw.write) * 100).toFixed(1)}%`);
 
-  if (bql.concurrentWrite) {
-    console.log("\n--- Synthetic: Concurrent Writes ---");
-    for (const [level, ops] of Object.entries(bql.concurrentWrite)) {
-      console.log(`  ${level} concurrent: ${formatOps(ops)}`);
-    }
+  console.log("\n--- Synthetic: Concurrent Writes ---");
+  for (const level of CONCURRENCY_LEVELS) {
+    const rawOps = raw.concurrentWrite?.[level] ?? 0;
+    const bqlOps = bql.concurrentWrite?.[level] ?? 0;
+    console.log(`  ${level} concurrent | Raw: ${formatOps(rawOps)} | BunQL: ${formatOps(bqlOps)}`);
   }
 
   // --- Realistic workloads ---
