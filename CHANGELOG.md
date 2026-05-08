@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.0-alpha.5] - 2026-05-08
+
+### Added
+- `readerPool` option — multi-connection read pool for parallel reads (default: 0 = off)
+- `fts` getter + `FTS5Helper` — full FTS5 API: create, insert, delete, update, search, snippet, highlight, rebuild, merge, optimize, drop, rank
+- `vacuum()` — incremental or full vacuum with page count tracking
+- `backup(path)` — online backup via `VACUUM INTO` through WriteQueue
+- `MaintenanceConfig` — auto-scheduler: periodic checkpoint, vacuum, backup, integrity check via `setInterval`
+- `slowQueryThreshold` — callback when query/run exceeds threshold in ms
+- `pragma.autoVacuum` option (`INCREMENTAL` / `FULL` / `NONE`)
+- `BunQLServer` — optional HTTP bridge via `bunql/server` subpath import
+
+### Changed
+- 111 tests (was 102)
+- Build now produces two entry points: `./dist/index.js` and `./dist/server/index.js`
+
 ## [0.1.0-alpha.4] - 2026-05-08
 
 ### Added

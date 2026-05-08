@@ -244,6 +244,86 @@ raw.run("PRAGMA synchronous=FULL");
 raw.exec("VACUUM");
 ```
 
+### Reader Pool (Parallel Reads)
+
+Multiple read-only connections untuk parallel reads:
+
+```typescript
+import { BunQL } from "@nds-stack/bunql";
+
+// Pool of 3 read-only connections, round-robin
+const db = new BunQL("./app.db", { readerPool: 3 });
+
+// Reads otomatis terdistribusi — parallel safe
+const users = db.query("SELECT * FROM users");
+const posts = db.query("SELECT * FROM posts");
+
+await db.close();
+```
+
+### FTS5 Full-Text Search
+
+Full-text search via built-in SQLite FTS5 (tanpa dependensi tambahan):
+
+```typescript
+import { BunQL } from "@nds-stack/bunql";
+
+const db = new BunQL("./app.db");
+
+// Setup
+await db.fts.create("articles", ["title", "body"]);
+
+// Insert
+await db.fts.insert("articles", {
+  title: "Hello SQLite",
+  body: "SQLite FTS5 is a powerful full-text search engine",
+});
+
+// Search with ranking + snippet
+const results = db.fts.search("articles", "sqlite", {
+  limit: 10,
+  snippet: { startTag: "<b>", endTag: "</b>" },
+});
+
+// Index maintenance
+await db.fts.optimize("articles");
+await db.fts.rebuild("articles");
+await db.fts.drop("articles");
+```
+
+### Maintenance & Auto-Scheduling
+
+```typescript
+import { BunQL } from "@nds-stack/bunql";
+
+const db = new BunQL("./app.db", {
+  maintenance: {
+    checkpoint: { enabled: true, pagesThreshold: 1000, mode: "TRUNCATE" },
+    vacuum: { enabled: true, mode: "incremental", pagesPerStep: 100 },
+    backup: { enabled: true, intervalMs: 86_400_000, path: "./backups/" },
+  },
+  slowQueryThreshold: 100,  // ms — log queries slower than this
+  events: {
+    onSlowQuery: (sql, ms) => console.warn(`Slow query (${ms}ms):`, sql),
+  },
+});
+```
+
+### Vacuum
+
+```typescript
+import { BunQL } from "@nds-stack/bunql";
+
+const db = new BunQL("./app.db");
+
+// Full vacuum (blocking)
+await db.vacuum();
+
+// Incremental vacuum (non-blocking, page-at-a-time)
+const result = await db.vacuum({ incremental: true, pagesPerStep: 100 });
+console.log(`Reclaimed ${result.pagesReclaimed} pages`);
+```
+
 ---
 
 ## API
@@ -263,9 +343,13 @@ new BunQL(path: string, options?: BunQLOptions)
 | `cacheSize` | `number` | `-2000` | Page cache size (negative = KB, -2000 = 2MB) |
 | `foreignKeys` | `boolean` | `true` | Enforce FOREIGN KEY constraints |
 | `retry` | `RetryConfig` | — | Retry policy for SQLITE_BUSY |
+| `readerPool` | `number` | `0` | Number of read-only connections for parallel reads (`0` = disabled) |
+| `maintenance` | `MaintenanceConfig` | — | Auto-scheduler for checkpoint, vacuum, backup, integrity check |
+| `slowQueryThreshold` | `number` | `0` | Slow query threshold in ms (`0` = disabled). Triggers `onSlowQuery` event |
+| `pragma` | `{ autoVacuum? }` | — | PRAGMA options like `autoVacuum` |
 | `logger` | `Logger` | — | Logger (`console`-compatible) |
 | `hooks` | `BunQLHooks` | — | Lifecycle callbacks |
-| `events` | `EventHandlers` | — | Event handlers |
+| `events` | `EventHandlers` | — | Event handlers (includes `onSlowQuery`) |
 
 ### RetryConfig
 
@@ -290,8 +374,10 @@ new BunQL(path: string, options?: BunQLOptions)
 | `checkpoint(mode)` | `Promise<CheckpointResult>` | Explicit WAL checkpoint (PASSIVE \| FULL \| RESTART \| TRUNCATE). |
 | `backup(path)` | `Promise<BackupResult>` | Online backup via `VACUUM INTO`. Safe, queue-aware. |
 | `raw` | `Database` | Getter — akses langsung ke instance `bun:sqlite`. |
+| `fts` | `FTS5Helper` | Getter — FTS5 search helper (create, search, insert, delete, update, rebuild, merge, optimize, drop). |
 | `metrics` | `BunQLMetrics` | Getter — real-time operation counters (writes, reads, txs, queue). |
 | `cacheStats` | `CacheStats` | Getter — statement cache hit/miss/size/rate. |
+| `vacuum(opts?)` | `Promise<VacuumResult>` | Full or incremental vacuum. Returns reclaimed pages count. |
 | `close()` | `Promise<void>` | Graceful shutdown. Drains queue, finalizes statements, closes DB. |
 
 ### Result Types
@@ -346,6 +432,16 @@ interface CheckpointResult {
 interface BackupResult {
   size: number;
   durationMs: number;
+}
+
+interface VacuumResult {
+  pagesReclaimed: number;
+  durationMs: number;
+}
+
+interface FTSResult {
+  rank: number;
+  [column: string]: unknown;
 }
 ```
 
@@ -417,7 +513,7 @@ interface BackupResult {
 | Reads | Direct | Cached (LRU, max 100) |
 | Prepared stmts | Manual manage | Auto-cached, reused |
 | Graceful shutdown | Manual | Queue drain + cache finalize |
-| Bundle size | Built-in | +20.1KB (includes yocto-queue) |
+| Bundle size | Built-in | +22.7KB core / +6.5KB server |
 
 bunql is not a replacement for `bun:sqlite` — it's a **safety layer** on top. You still write raw SQL. The wrapper handles what developers consistently get wrong: concurrency, error recovery, and resource cleanup.
 
@@ -460,7 +556,7 @@ Both benchmarks use identical PRAGMA settings: `WAL`, `synchronous=NORMAL`, `cac
 
 ## Stability
 
-- **102 tests** — unit, integration, concurrency, stress
+- **111 tests** — unit, integration, concurrency, stress, FTS5, reader pool
 - **5000 sequential writes** — verified stable
 - **Graceful shutdown** — drain queue → finalize statements → close DB
 - **Memory safe** — LRU cache eviction, `yocto-queue` linked-list, no unbounded growth

@@ -1,10 +1,22 @@
 # bunql — TODO & Roadmap
 
-**Current Version:** `0.1.0-alpha.4`
+**Current Version:** `0.1.0-alpha.5`
 
 **Status:** Core features (M0-M5) complete. Observability & data safety features added.
 
 ---
+
+## ✅ Completed in v0.1.0-alpha.5
+
+- `readerPool` option — multi-connection parallel reads (opsional, default 0)
+- `FTS5Helper` — full FTS5 API (create, insert, delete, update, search, snippet, highlight, rebuild, merge, optimize, drop, rank)
+- `vacuum()` — incremental & full vacuum with page tracking
+- `MaintenanceConfig` — auto scheduler (checkpoint, vacuum, backup, integrity)
+- `slowQueryThreshold` — slow query callback
+- `pragma.autoVacuum` — auto_vacuum config option
+- `BunQLServer` — opsional HTTP bridge via `bunql/server` subpath
+- 111 tests (was 102)
+- Dual entry points: `@nds-stack/bunql` + `@nds-stack/bunql/server`
 
 ## ✅ Completed in v0.1.0-alpha.4
 

@@ -50,3 +50,21 @@ export interface BackupResult {
   size: number;
   durationMs: number;
 }
+
+export interface FTSResult {
+  rank: number;
+  [column: string]: unknown;
+}
+
+export interface VacuumResult {
+  pagesReclaimed: number;
+  durationMs: number;
+}
+
+export interface ServerOptions {
+  port?: number;
+  host?: string;
+  auth?: { apiKey: string };
+  maxConnections?: number;
+  cors?: boolean;
+}

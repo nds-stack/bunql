@@ -4,6 +4,8 @@ import { WriteQueue } from "./write-queue.ts";
 import { RetryPolicy, DEFAULT_RETRY_CONFIG } from "./retry-policy.ts";
 import { TransactionManager, type TransactionContext } from "./transaction-manager.ts";
 import { StatementCache } from "./statement-cache.ts";
+import { ReaderPool } from "./reader-pool.ts";
+import { FTS5Helper } from "./fts5.ts";
 import { ConnectionError } from "./errors/connection-error.ts";
 import { QueueError } from "./errors/queue-error.ts";
 import type {
@@ -22,6 +24,8 @@ import type {
   CheckpointResult,
   WalStatus,
   BackupResult,
+  VacuumResult,
+  MaintenanceConfig,
 } from "./types/index.ts";
 
 export class BunQL {
@@ -31,9 +35,12 @@ export class BunQL {
   #retryPolicy: RetryPolicy;
   #transactionManager: TransactionManager;
   #statementCache: StatementCache;
+  #readerPool: ReaderPool | null = null;
+  #fts5: FTS5Helper;
   #closed = false;
   #logger?: Logger;
   #onError?: (error: Error) => void;
+  #maintenanceTimer: Timer | null = null;
   #metrics: BunQLMetrics = {
     writes: { total: 0, failed: 0, retried: 0 },
     reads: { total: 0 },
@@ -74,6 +81,10 @@ export class BunQL {
       this.#db.run(`PRAGMA busy_timeout=${config.busyTimeout}`);
     }
 
+    if (config.autoVacuum !== "NONE") {
+      this.#db.run(`PRAGMA auto_vacuum=${config.autoVacuum}`);
+    }
+
     this.#writeQueue = new WriteQueue();
     this.#retryPolicy = new RetryPolicy(config.retry);
     this.#statementCache = new StatementCache(this.#db);
@@ -83,8 +94,14 @@ export class BunQL {
       config.hooks,
       this.#logger,
     );
+    this.#fts5 = new FTS5Helper(this.#db);
+
+    if (config.readerPoolSize > 0) {
+      this.#readerPool = new ReaderPool(path, config.readerPoolSize);
+    }
 
     this.#setupEventHandlers(config.events);
+    this.#startMaintenance(config.maintenance);
     this.#log("info", `Database opened: ${path} (WAL: ${config.wal})`);
   }
 
@@ -103,6 +120,11 @@ export class BunQL {
   get raw(): Database {
     this.#ensureOpen();
     return this.#db;
+  }
+
+  get fts(): FTS5Helper {
+    this.#ensureOpen();
+    return this.#fts5;
   }
 
   get metrics(): BunQLMetrics {
@@ -134,15 +156,25 @@ export class BunQL {
 
     this.#metrics.reads.total++;
     const start = performance.now();
-    const stmt = this.#statementCache.get(sql);
-    const rows = stmt.all(...(params ?? [])) as T[];
-    const columns = rows.length > 0 ? Object.keys(rows[0] as Record<string, unknown>) : [];
 
-    return {
-      rows,
-      columns,
-      durationMs: performance.now() - start,
-    };
+    let rows: T[];
+    if (this.#readerPool) {
+      const entry = this.#readerPool.next();
+      const stmt = entry.cache.get(sql);
+      rows = stmt.all(...(params ?? [])) as T[];
+    } else {
+      const stmt = this.#statementCache.get(sql);
+      rows = stmt.all(...(params ?? [])) as T[];
+    }
+
+    const columns = rows.length > 0 ? Object.keys(rows[0] as Record<string, unknown>) : [];
+    const durationMs = performance.now() - start;
+
+    if (this.#config.slowQueryThreshold > 0 && durationMs > this.#config.slowQueryThreshold) {
+      this.#config.events?.onSlowQuery?.(sql, durationMs);
+    }
+
+    return { rows, columns, durationMs };
   }
 
   async run(sql: string, params?: SQLQueryBindings[]): Promise<RunResult> {
@@ -165,7 +197,11 @@ export class BunQL {
         });
       });
 
-      this.#config.hooks?.afterWrite?.(sql, params ?? [], performance.now() - start);
+      const durationMs = performance.now() - start;
+      if (this.#config.slowQueryThreshold > 0 && durationMs > this.#config.slowQueryThreshold) {
+        this.#config.events?.onSlowQuery?.(sql, durationMs);
+      }
+      this.#config.hooks?.afterWrite?.(sql, params ?? [], durationMs);
       return result;
     } catch (error) {
       this.#metrics.writes.failed++;
@@ -331,9 +367,41 @@ export class BunQL {
     return { size, durationMs: performance.now() - start };
   }
 
+  async vacuum(options?: { incremental?: boolean; pagesPerStep?: number }): Promise<VacuumResult> {
+    this.#ensureOpen();
+    const start = performance.now();
+
+    const startCount = (this.#db
+      .prepare("PRAGMA freelist_count")
+      .get() as Record<string, number>)?.["freelist_count"] ?? 0;
+
+    await this.#writeQueue.enqueue(async () => {
+      if (options?.incremental) {
+        const pages = options.pagesPerStep ?? 100;
+        this.#db.exec(`PRAGMA incremental_vacuum(${pages})`);
+      } else {
+        this.#db.exec("VACUUM");
+      }
+    });
+
+    const endCount = (this.#db
+      .prepare("PRAGMA freelist_count")
+      .get() as Record<string, number>)?.["freelist_count"] ?? 0;
+
+    return {
+      pagesReclaimed: Math.max(0, startCount - endCount),
+      durationMs: performance.now() - start,
+    };
+  }
+
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
+
+    if (this.#maintenanceTimer) {
+      clearInterval(this.#maintenanceTimer);
+      this.#maintenanceTimer = null;
+    }
 
     this.#writeQueue.close();
 
@@ -344,6 +412,8 @@ export class BunQL {
     }
 
     this.#statementCache.clear();
+
+    this.#readerPool?.close();
 
     try {
       this.#db.close();
@@ -370,6 +440,8 @@ export class BunQL {
       ...options?.retry,
     };
 
+    const readerPoolSize = options?.readerPool ?? options?.readerPoolSize ?? 0;
+
     return {
       wal: options?.wal ?? true,
       readonly: options?.readonly ?? false,
@@ -378,6 +450,10 @@ export class BunQL {
       cacheSize: options?.cacheSize ?? -2000,
       foreignKeys: options?.foreignKeys ?? true,
       retry,
+      readerPoolSize,
+      maintenance: options?.maintenance,
+      slowQueryThreshold: options?.slowQueryThreshold ?? 0,
+      autoVacuum: options?.pragma?.autoVacuum ?? "NONE",
       logger: options?.logger,
       hooks: options?.hooks,
       events: options?.events,
@@ -405,9 +481,59 @@ export class BunQL {
     }
   }
 
+  #startMaintenance(maintenance?: MaintenanceConfig): void {
+    if (!maintenance) return;
+    const intervals: number[] = [];
+
+    if (maintenance.checkpoint?.enabled) {
+      intervals.push(maintenance.checkpoint.pagesThreshold ?? 60000);
+    }
+    if (maintenance.vacuum?.enabled) {
+      intervals.push(maintenance.vacuum.pagesPerStep ?? 60000);
+    }
+    if (maintenance.backup?.enabled) {
+      intervals.push(maintenance.backup.intervalMs);
+    }
+    if (maintenance.integrityCheck?.enabled) {
+      intervals.push(maintenance.integrityCheck.intervalMs);
+    }
+
+    if (intervals.length === 0) return;
+
+    const intervalMs = Math.min(...intervals);
+
+    this.#maintenanceTimer = setInterval(() => {
+      this.#writeQueue.enqueue(async () => {
+        try {
+          if (maintenance.checkpoint?.enabled) {
+            const status = await this.walStatus();
+            if (status.walSizePages > (maintenance.checkpoint!.pagesThreshold ?? 1000)) {
+              await this.checkpoint(maintenance.checkpoint!.mode ?? "TRUNCATE");
+            }
+          }
+          if (maintenance.vacuum?.enabled) {
+            const mode = maintenance.vacuum!.mode ?? "incremental";
+            if (mode === "incremental") {
+              await this.vacuum({ incremental: true, pagesPerStep: maintenance.vacuum!.pagesPerStep ?? 100 });
+            }
+          }
+          if (maintenance.backup?.enabled) {
+            const ts = new Date().toISOString().replace(/[:.]/g, "-");
+            const backupPath = `${maintenance.backup!.path.replace(/\/$/, "")}/bunql-backup-${ts}.db`;
+            await this.backup(backupPath);
+          }
+        } catch (error) {
+          this.#log("error", `Maintenance task failed: ${error}`);
+        }
+      }).catch(() => {});
+    }, intervalMs);
+  }
+
   #log(level: "debug" | "warn" | "info" | "error", message: string): void {
     this.#logger?.[level]?.(`[BunQL] ${message}`);
   }
 }
 
-export type { BunQLOptions, RetryConfig, QueryResult, RunResult, Statement, BatchOperation, TransactionContext, BunQLMetrics, CacheStats, CheckpointMode, CheckpointResult, WalStatus, BackupResult };
+export type { TransactionContext } from "./transaction-manager.ts";
+export type { BunQLOptions, RetryConfig, QueryResult, RunResult, Statement, BatchOperation, BunQLMetrics, CacheStats, CheckpointMode, CheckpointResult, WalStatus, BackupResult, VacuumResult, FTS5Options, FTSResult, MaintenanceConfig } from "./types/index.ts";
+export type { ServerOptions } from "./types/result.ts";

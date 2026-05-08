@@ -6,6 +6,8 @@ export type {
   BunQLHooks,
   EventHandlers,
   BunQLConfig,
+  MaintenanceConfig,
+  FTS5Options,
 } from "./options.ts";
 
 export type {
@@ -18,4 +20,7 @@ export type {
   CheckpointResult,
   WalStatus,
   BackupResult,
+  FTSResult,
+  VacuumResult,
+  ServerOptions,
 } from "./result.ts";

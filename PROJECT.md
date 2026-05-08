@@ -50,19 +50,34 @@ Di ecosystem Bun, `bun:sqlite` sudah tersedia sebagai native binding yang cepat,
 ```
 bunql
 ├── BunQL (Facade)          ← Entry point utama, public API
-│   ├── .query()            ← Read-only query (parallel safe)
+│   ├── .query()            ← Read-only query (parallel safe, readerPool optional)
 │   ├── .run()              ← Write query (via WriteQueue)
 │   ├── .transaction()      ← Serialized transaction
 │   ├── .prepare()          ← Prepared statement (cached)
 │   ├── .batch()            ← Batch write operations
 │   ├── .exec()             ← Multi-statement SQL (via WriteQueue)
 │   ├── .raw                ← Getter: akses langsung Database bun:sqlite
+│   ├── .fts                ← Getter: FTS5 helper (search, insert, delete, update, rebuild, etc)
 │   ├── .metrics            ← Getter: real-time operation counters
 │   ├── .cacheStats         ← Getter: statement cache hit rate
 │   ├── .walStatus()        ← WAL file & checkpoint status
 │   ├── .checkpoint()       ← Explicit WAL checkpoint
 │   ├── .backup()           ← Online backup via VACUUM INTO
+│   ├── .vacuum()           ← Incremental or full vacuum
 │   └── .close()            ← Graceful shutdown
+│
+├── BunQLServer (opsional)  ← HTTP bridge, import dari @nds-stack/bunql/server
+│
+├── ReaderPool              ← Multi-connection parallel reads (opsional)
+│   ├── next()              ← Round-robin reader connection
+│   └── close()             ← Close all connections
+│
+├── FTS5Helper              ← Full-text search engine
+│   ├── create()            ← Create FTS5 virtual table
+│   ├── insert/update/delete ← CRUD
+│   ├── search()            ← MATCH query with snippet/highlight
+│   ├── rebuild/merge/optimize ← Index maintenance
+│   └── drop()              ← Remove virtual table
 │
 ├── WriteQueue              ← Serialisasi semua write operations
 │   ├── enqueue()           ← Tambah operation ke queue
@@ -189,52 +204,86 @@ await db.exec(`
 ### Raw Database Access
 
 ```typescript
+import { BunQL } from "bunql";
+import type { Database } from "bun:sqlite";
+
+const db = new BunQL("./app.db");
+const raw: Database = db.raw;
+raw.run("PRAGMA cache_size=-8000");
+raw.run("PRAGMA synchronous=FULL");
+raw.exec("VACUUM");
+```
+
+### Reader Pool (Parallel Reads)
+
+```typescript
+import { BunQL } from "bunql";
+
+// Pool of 3 read-only connections, round-robin
+const db = new BunQL("./app.db", { readerPool: 3 });
+
+// Reads otomatis terdistribusi ke pool connections
+const users = db.query("SELECT * FROM users");
+const posts = db.query("SELECT * FROM posts");
+// Kedua query bisa jalan parallel di connection berbeda
+await db.close();
+```
+
+### FTS5 Full-Text Search
+
+```typescript
+import { BunQL } from "bunql";
+
 const db = new BunQL("./app.db");
 
-// Akses langsung ke Database bun:sqlite
-db.raw.run("PRAGMA cache_size=-8000");
-db.raw.run("PRAGMA synchronous=FULL");
+// Setup FTS5 virtual table
+await db.fts.create("articles", ["title", "body"]);
 
-const result = db.raw.query("SELECT * FROM users");
-db.raw.exec("VACUUM");
-```
+// Insert documents
+await db.fts.insert("articles", { title: "Hello World", body: "SQLite FTS5 guide" });
 
-### Batch in Transaction
-
-```typescript
-await db.transaction(async (tx) => {
-  await tx.batch([
-    { sql: "INSERT INTO users (name) VALUES (?)", params: ["Alice"] },
-    { sql: "INSERT INTO users (name) VALUES (?)", params: ["Bob"] },
-  ]);
+// Search with ranking
+const results = db.fts.search("articles", "sqlite", {
+  limit: 10,
+  snippet: true,
+  highlight: true,
 });
+// → [{ rowid: 1, title: "...", body: "...", snippet: "...<b>SQLite</b>...", rank: -1.2 }]
+
+// Index maintenance
+await db.fts.optimize("articles");
+await db.fts.drop("articles");
 ```
 
-### Prepared Statement
+### Maintenance Mode
 
 ```typescript
-const stmt = db.prepare<{ id: number; name: string }, [string]>(
-  "SELECT * FROM users WHERE name = ?",
-);
-const user = stmt.get("Alice");
-```
+import { BunQL } from "bunql";
 
-### Konfigurasi
-
-```typescript
 const db = new BunQL("./app.db", {
-  wal: true,
-  synchronous: "NORMAL",         // WAL mode default
-  cacheSize: -8000,              // 8MB page cache
-  foreignKeys: true,             // FK enforcement ON
-  busyTimeout: 5000,
-  retry: {
-    maxRetries: 5,
-    baseDelay: 10,
-    maxDelay: 1000,
-    jitter: true,
+  maintenance: {
+    checkpoint: { enabled: true, pagesThreshold: 1000, mode: "TRUNCATE" },
+    vacuum: { enabled: true, mode: "incremental", pagesPerStep: 100 },
+    backup: { enabled: true, intervalMs: 86_400_000, path: "./backups/" },
+    integrityCheck: { enabled: true, intervalMs: 604_800_000 },
+  },
+  slowQueryThreshold: 100,
+  pragma: { autoVacuum: "INCREMENTAL" },
+  events: {
+    onSlowQuery: (sql, ms) => console.warn(`Slow query (${ms}ms):`, sql),
   },
 });
+```
+
+### Vacuum
+
+```typescript
+// Full vacuum
+await db.vacuum();
+
+// Incremental (tidak block writes lama)
+const result = await db.vacuum({ incremental: true, pagesPerStep: 100 });
+console.log(`Reclaimed ${result.pagesReclaimed} pages in ${result.durationMs}ms`);
 ```
 
 ### Metrics

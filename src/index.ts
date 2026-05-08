@@ -13,7 +13,12 @@ export type {
   CheckpointResult,
   WalStatus,
   BackupResult,
+  VacuumResult,
+  FTS5Options,
+  FTSResult,
+  MaintenanceConfig,
 } from "./bunql.ts";
+export type { ServerOptions } from "./types/result.ts";
 
 export {
   BunQLError,
@@ -27,3 +32,5 @@ export { WriteQueue } from "./write-queue.ts";
 export { RetryPolicy, DEFAULT_RETRY_CONFIG } from "./retry-policy.ts";
 export { TransactionManager } from "./transaction-manager.ts";
 export { StatementCache } from "./statement-cache.ts";
+export { ReaderPool } from "./reader-pool.ts";
+export { FTS5Helper } from "./fts5.ts";

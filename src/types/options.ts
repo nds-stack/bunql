@@ -1,10 +1,40 @@
 import type { SQLQueryBindings } from "bun:sqlite";
+import type { CheckpointMode } from "./result.ts";
 
 export interface RetryConfig {
   maxRetries?: number;
   baseDelay?: number;
   maxDelay?: number;
   jitter?: boolean;
+}
+
+export interface MaintenanceConfig {
+  checkpoint?: {
+    enabled: boolean;
+    pagesThreshold?: number;
+    mode?: CheckpointMode;
+  };
+  vacuum?: {
+    enabled: boolean;
+    mode?: "incremental" | "full";
+    pagesPerStep?: number;
+  };
+  backup?: {
+    enabled: boolean;
+    intervalMs: number;
+    path: string;
+    maxBackups?: number;
+  };
+  integrityCheck?: {
+    enabled: boolean;
+    intervalMs: number;
+  };
+}
+
+export interface FTS5Options {
+  tokenize?: string;
+  content?: string;
+  prefix?: number[];
 }
 
 export interface BunQLOptions {
@@ -18,6 +48,13 @@ export interface BunQLOptions {
   logger?: Logger;
   hooks?: BunQLHooks;
   events?: EventHandlers;
+  readerPool?: number;
+  readerPoolSize?: number;
+  maintenance?: MaintenanceConfig;
+  slowQueryThreshold?: number;
+  pragma?: {
+    autoVacuum?: "NONE" | "FULL" | "INCREMENTAL";
+  };
 }
 
 export interface BatchOperation {
@@ -39,6 +76,7 @@ export interface EventHandlers {
   onRetry?: (attempt: number, delayMs: number, error: Error) => void;
   onDrain?: () => void;
   onError?: (error: Error) => void;
+  onSlowQuery?: (sql: string, durationMs: number) => void;
 }
 
 export interface BunQLConfig {
@@ -49,6 +87,10 @@ export interface BunQLConfig {
   cacheSize: number;
   foreignKeys: boolean;
   retry: Required<RetryConfig>;
+  readerPoolSize: number;
+  maintenance?: MaintenanceConfig;
+  slowQueryThreshold: number;
+  autoVacuum: "NONE" | "FULL" | "INCREMENTAL";
   logger?: Logger;
   hooks?: BunQLHooks;
   events?: EventHandlers;
