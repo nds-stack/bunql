@@ -3,7 +3,7 @@ import { BusyError } from "./errors/busy-error.ts";
 
 export const DEFAULT_RETRY_CONFIG = {
   maxRetries: 5,
-  baseDelay: 10,
+  baseDelay: 50,
   maxDelay: 1000,
   jitter: true,
 } satisfies Required<RetryConfig>;

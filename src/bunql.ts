@@ -116,17 +116,13 @@ export class BunQL {
     try {
       const result = await this.#writeQueue.enqueue(async () => {
         return await this.#retryPolicy.execute(async () => {
-          const stmt = this.#db.prepare(sql);
-          try {
-            const raw = stmt.run(...(params ?? []));
-            return {
-              changes: raw.changes,
-              lastInsertRowid: raw.lastInsertRowid,
-              durationMs: performance.now() - start,
-            };
-          } finally {
-            stmt.finalize();
-          }
+          const stmt = this.#statementCache.get(sql);
+          const raw = stmt.run(...(params ?? []));
+          return {
+            changes: raw.changes,
+            lastInsertRowid: raw.lastInsertRowid,
+            durationMs: performance.now() - start,
+          };
         });
       });
 
@@ -192,20 +188,15 @@ export class BunQL {
         for (const op of operations) {
           this.#config.hooks?.beforeWrite?.(op.sql, op.params ?? []);
           const start = performance.now();
-          const stmt = this.#db.prepare(op.sql);
-
-          try {
-            const raw = stmt.run(...(op.params ?? []));
-            const result: RunResult = {
-              changes: raw.changes,
-              lastInsertRowid: raw.lastInsertRowid,
-              durationMs: performance.now() - start,
-            };
-            results.push(result);
-            this.#config.hooks?.afterWrite?.(op.sql, op.params ?? [], performance.now() - start);
-          } finally {
-            stmt.finalize();
-          }
+          const stmt = this.#statementCache.get(op.sql);
+          const raw = stmt.run(...(op.params ?? []));
+          const result: RunResult = {
+            changes: raw.changes,
+            lastInsertRowid: raw.lastInsertRowid,
+            durationMs: performance.now() - start,
+          };
+          results.push(result);
+          this.#config.hooks?.afterWrite?.(op.sql, op.params ?? [], performance.now() - start);
         }
 
         this.#db.run("COMMIT");

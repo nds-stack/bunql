@@ -1,3 +1,4 @@
+import Queue from "yocto-queue";
 import { QueueError } from "./errors/queue-error.ts";
 
 interface QueueItem<T = unknown> {
@@ -7,7 +8,7 @@ interface QueueItem<T = unknown> {
 }
 
 export class WriteQueue {
-  #items: QueueItem[] = [];
+  #items = new Queue<QueueItem>();
   #processing = false;
   #closed = false;
   #drainPromise: Promise<void> | null = null;
@@ -15,7 +16,7 @@ export class WriteQueue {
   #onDrain: (() => void) | null = null;
 
   get size(): number {
-    return this.#items.length;
+    return this.#items.size;
   }
 
   get isProcessing(): boolean {
@@ -38,7 +39,7 @@ export class WriteQueue {
     }
 
     return new Promise<T>((resolve, reject) => {
-      this.#items.push({ execute, resolve: resolve as (value: unknown) => void, reject });
+      this.#items.enqueue({ execute, resolve: resolve as (value: unknown) => void, reject });
       if (!this.#processing) {
         this.#processing = true;
         queueMicrotask(() => this.#process());
@@ -47,7 +48,7 @@ export class WriteQueue {
   }
 
   async drain(): Promise<void> {
-    if (this.#items.length === 0 && !this.#processing) {
+    if (this.#items.size === 0 && !this.#processing) {
       return;
     }
     if (!this.#drainPromise) {
@@ -64,8 +65,8 @@ export class WriteQueue {
 
   clearPending(reason: string): void {
     const error = new QueueError(reason);
-    while (this.#items.length > 0) {
-      const item = this.#items.shift();
+    while (this.#items.size > 0) {
+      const item = this.#items.dequeue();
       if (item) {
         item.reject(error);
       }
@@ -74,8 +75,8 @@ export class WriteQueue {
 
   async #process(): Promise<void> {
     try {
-      while (this.#items.length > 0) {
-        const item = this.#items.shift();
+      while (this.#items.size > 0) {
+        const item = this.#items.dequeue();
         if (!item) continue;
 
         try {

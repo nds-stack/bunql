@@ -4,6 +4,9 @@
   "workspaces": {
     "": {
       "name": "bunql",
+      "dependencies": {
+        "yocto-queue": "^0.1.0",
+      },
       "devDependencies": {
         "@eslint/js": "^10.0.1",
         "@types/bun": "latest",
