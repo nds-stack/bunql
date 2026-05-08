@@ -389,25 +389,26 @@ bunql is not a replacement for `bun:sqlite` — it's a **safety layer** on top. 
 ## Benchmarks
 
 Environment: Bun v1.3.13, Windows x64, 500 iterations per test.
+Both benchmarks use identical PRAGMA settings: `WAL`, `synchronous=NORMAL`, `cache_size=-2000`, `foreign_keys=ON`.
 
 ### Synthetic Throughput
 
 | Operation | Raw `bun:sqlite` | `@nds-stack/bunql` | Overhead |
 |-----------|-----------------|--------------------|----------|
-| Point read | 267K ops/s | 258K ops/s | -3.3% |
-| Single write | 903 ops/s | 22.5K ops/s | **+2388%** |
-| 10 concurrent writes | — | 53.3K ops/s | — |
-| 50 concurrent writes | — | 21.8K ops/s | — |
+| Point read | 142K ops/s | 234K ops/s | **+64.7%** |
+| Single write | 32.0K ops/s | 21.7K ops/s | -32.3% |
+| 10 concurrent writes | — | 50.4K ops/s | — |
+| 50 concurrent writes | — | 25.8K ops/s | — |
 
-> Write performance vastly exceeds raw `bun:sqlite` because the statement cache reuses prepared statements across calls. Raw `bun:sqlite` benchmarks create a new statement per batch for fairness comparison.
+> Reads benefit from statement cache (LRU, max 100). Writes have ~32% overhead from queue serialization — the cost of guaranteed `SQLITE_BUSY`-free concurrency.
 
 ### Realistic Workloads
 
 | Workload | Description | Throughput |
 |----------|-------------|-----------|
-| Mixed | Interleaved reads/writes/transactions | 25.7K ops/s |
-| Batch | 25 writes per transaction (10 batches) | 190.6K ops/s |
-| Cache pressure | 200 unique queries (triggers evictions) | 26.6K ops/s |
+| Mixed | Interleaved reads/writes/transactions | 29.0K ops/s |
+| Batch | 25 writes per transaction (10 batches) | 211.5K ops/s |
+| Cache pressure | 200 unique queries (triggers evictions) | 36.2K ops/s |
 
 ---
 

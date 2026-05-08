@@ -29,6 +29,9 @@ function formatOps(ops: number): string {
 async function benchRawSQLite(path: string) {
   const db = new Database(path);
   db.run("PRAGMA journal_mode=WAL");
+  db.run("PRAGMA synchronous=NORMAL");
+  db.run("PRAGMA cache_size=-2000");
+  db.run("PRAGMA foreign_keys=ON");
   db.run("CREATE TABLE bench (id INTEGER PRIMARY KEY, val TEXT)");
 
   const insert = db.prepare("INSERT INTO bench (val) VALUES (?)");
