@@ -123,7 +123,7 @@ describe("Events", () => {
     db.close();
   });
 
-  test("onError is called via event handler", async () => {
+  test("onError is called via event handler on write failure", async () => {
     const errors: Error[] = [];
 
     const db = new BunQL(dbPath, {
@@ -132,15 +132,16 @@ describe("Events", () => {
       },
     });
 
-    await db.close();
+    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY)");
 
     try {
-      await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY)");
+      await db.run("INVALID SQL STATEMENT");
     } catch {
       // expected
     }
 
+    expect(errors.length).toBeGreaterThanOrEqual(1);
+
     db.close();
-    // onError may or may not be called depending on implementation
   });
 });

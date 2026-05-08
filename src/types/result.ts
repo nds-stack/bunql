@@ -13,6 +13,6 @@ export interface RunResult {
 export interface Statement<T = unknown, P extends unknown[] = unknown[]> {
   all(...params: P): T[];
   get(...params: P): T | undefined;
-  run(...params: P): RunResult;
+  run(...params: P): Promise<RunResult>;
   finalize(): void;
 }

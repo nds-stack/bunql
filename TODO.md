@@ -1,5 +1,28 @@
 # bunql — TODO & Roadmap
 
+**Current Version:** `0.1.0-alpha.1`
+
+**Status:** Core features (M0-M5) complete. Remaining work: M6 (stress test automation), M7 (benchmark results doc), M8 (polish & publish).
+
+---
+
+## ✅ Completed in v0.1.0-alpha.1
+
+- `raw` getter for direct `bun:sqlite` access (custom PRAGMA, VACUUM, etc.)
+- `exec()` method for multi-statement SQL (schema file loading)
+- PRAGMA constructor options: `synchronous`, `cacheSize`, `foreignKeys`
+- `TransactionContext.batch()` for batch writes inside transactions
+- Statement caching inside transactions for performance
+- `BusyError` properly thrown on retry exhaustion (with `cause` chain)
+- `onError` event handler fully wired
+- `prepare().run()` now serialized through WriteQueue (no more SQLITE_BUSY)
+- `prepare().finalize()` safely removes from cache
+- `close()` sequence fixed: drain → finalize (not premature reject)
+- `durationMs` measured correctly in `prepare().run()`
+- `BatchOperation.params` typed as `SQLQueryBindings[]`
+
+---
+
 ## Milestone 0 — Project Bootstrap
 
 - [ ] Finalisasi `package.json` (name, version, exports, type, engines, scripts)

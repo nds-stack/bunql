@@ -54,7 +54,10 @@ bunql
 │   ├── .run()              ← Write query (via WriteQueue)
 │   ├── .transaction()      ← Serialized transaction
 │   ├── .prepare()          ← Prepared statement (cached)
-│   └── .batch()            ← Batch write operations
+│   ├── .batch()            ← Batch write operations
+│   ├── .exec()             ← Multi-statement SQL (via WriteQueue)
+│   ├── .raw                ← Getter: akses langsung Database bun:sqlite
+│   └── .close()            ← Graceful shutdown
 │
 ├── WriteQueue              ← Serialisasi semua write operations
 │   ├── enqueue()           ← Tambah operation ke queue
@@ -85,13 +88,17 @@ bunql
 User Code
     │
     ▼
-┌─────────────────────────────────────┐
-│  BunQL (Facade)                     │
-│                                     │
-│  .query() ───► bun:sqlite (direct) │ ← Reads: parallel, no queue
-│  .run()   ───► WriteQueue ──► DB    │ ← Writes: serialized
-│  .transaction() ► TxManager ─► DB  │ ← Transactions: serialized
-└─────────────────────────────────────┘
+┌───────────────────────────────────────────┐
+│  BunQL (Facade)                           │
+│                                           │
+│  .query()   ───► bun:sqlite (direct)     │ ← Reads: parallel, no queue
+│  .run()     ───► WriteQueue ──► DB        │ ← Writes: serialized
+│  .exec()    ───► WriteQueue ──► DB        │ ← Multi-stmt: serialized
+│  .prepare() ───► StatementCache ──► DB    │ ← Reads: cache hit, Writes: queue
+│  .transaction() ──► TxManager ──► DB      │ ← Transactions: serialized
+│  .batch()   ───► WriteQueue ──► DB        │ ← Batch: serialized + atomic
+│  .raw       ───► Database (direct)        │ ← Direct access (getter)
+└───────────────────────────────────────────┘
 ```
 
 ### Key Design Decisions
@@ -159,6 +166,40 @@ await db.batch([
 ]);
 ```
 
+### Exec (Multi-Statement SQL)
+
+```typescript
+await db.exec(`
+  CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
+  CREATE TABLE logs (id INTEGER PRIMARY KEY, message TEXT);
+  INSERT INTO users VALUES (1, 'seed');
+`);
+```
+
+### Raw Database Access
+
+```typescript
+const db = new BunQL("./app.db");
+
+// Akses langsung ke Database bun:sqlite
+db.raw.run("PRAGMA cache_size=-8000");
+db.raw.run("PRAGMA synchronous=FULL");
+
+const result = db.raw.query("SELECT * FROM users");
+db.raw.exec("VACUUM");
+```
+
+### Batch in Transaction
+
+```typescript
+await db.transaction(async (tx) => {
+  await tx.batch([
+    { sql: "INSERT INTO users (name) VALUES (?)", params: ["Alice"] },
+    { sql: "INSERT INTO users (name) VALUES (?)", params: ["Bob"] },
+  ]);
+});
+```
+
 ### Prepared Statement
 
 ```typescript
@@ -173,13 +214,16 @@ const user = stmt.get("Alice");
 ```typescript
 const db = new BunQL("./app.db", {
   wal: true,
+  synchronous: "NORMAL",         // WAL mode default
+  cacheSize: -8000,              // 8MB page cache
+  foreignKeys: true,             // FK enforcement ON
+  busyTimeout: 5000,
   retry: {
     maxRetries: 5,
     baseDelay: 10,
     maxDelay: 1000,
     jitter: true,
   },
-  busyTimeout: 5000,
 });
 ```
 

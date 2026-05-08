@@ -1,3 +1,5 @@
+import type { SQLQueryBindings } from "bun:sqlite";
+
 export interface RetryConfig {
   maxRetries?: number;
   baseDelay?: number;
@@ -9,6 +11,9 @@ export interface BunQLOptions {
   wal?: boolean;
   readonly?: boolean;
   busyTimeout?: number;
+  synchronous?: "OFF" | "NORMAL" | "FULL" | "EXTRA";
+  cacheSize?: number;
+  foreignKeys?: boolean;
   retry?: RetryConfig;
   logger?: Logger;
   hooks?: BunQLHooks;
@@ -17,7 +22,7 @@ export interface BunQLOptions {
 
 export interface BatchOperation {
   sql: string;
-  params?: unknown[];
+  params?: SQLQueryBindings[];
 }
 
 export type Logger = Pick<Console, "error" | "warn" | "info" | "debug">;
@@ -40,6 +45,9 @@ export interface BunQLConfig {
   wal: boolean;
   readonly: boolean;
   busyTimeout: number;
+  synchronous: "OFF" | "NORMAL" | "FULL" | "EXTRA";
+  cacheSize: number;
+  foreignKeys: boolean;
   retry: Required<RetryConfig>;
   logger?: Logger;
   hooks?: BunQLHooks;

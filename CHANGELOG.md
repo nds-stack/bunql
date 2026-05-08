@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.1.0-alpha.1] - 2026-05-08
+
+### Added
+- `raw` getter: direct access to underlying `bun:sqlite` Database instance
+- `exec()` method: run multi-statement SQL (e.g. schema files) via WriteQueue
+- PRAGMA constructor options: `synchronous`, `cacheSize`, `foreignKeys`
+- `TransactionContext.batch()`: batch writes inside transaction scope
+- Statement cache inside transactions (avoids per-call prepare/finalize overhead)
+- `onError` event handler now properly wired and called on operation failures
+- `BusyError` is now thrown when retry policy is exhausted (preserves original error as `cause`)
+- `StatementCache.remove()`: allows safe finalization of individual cached statements
+
+### Fixed
+- `prepare().run()` now goes through WriteQueue, preventing SQLITE_BUSY from concurrent writes
+- `prepare().finalize()` properly removes statement from cache, preventing use-after-free crashes
+- `close()` now drains queue before finalizing (no premature rejection of pending writes)
+- `durationMs` in `prepare().run()` now correctly measured instead of hardcoded to 0
+- `BatchOperation.params` type changed from `unknown[]` to `SQLQueryBindings[]` for type safety
+
+### Changed
+- `Statement.run()` now returns `Promise<RunResult>` instead of `RunResult` (write serialization)
+- PRAGMA defaults: `synchronous=NORMAL`, `cache_size=-2000`, `foreign_keys=ON`
+
 ## [0.1.0-alpha.0] - 2026-05-07
 
 ### Added

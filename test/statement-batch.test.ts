@@ -106,7 +106,7 @@ describe("Prepared Statement", () => {
       "INSERT INTO users (name) VALUES (?)"
     );
 
-    const result = stmt.run("Alice");
+    const result = await stmt.run("Alice");
     expect(result.changes).toBe(1);
 
     const users = db.query<{ name: string }>("SELECT name FROM users");
@@ -121,6 +121,34 @@ describe("Prepared Statement", () => {
 
     const stmt = db.prepare<unknown, [string]>("SELECT ? AS val");
     stmt.finalize();
+
+    db.close();
+  });
+
+  test("prepare.finalize removes from cache so new prepare re-creates", async () => {
+    const db = new BunQL(dbPath);
+    await db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+
+    const stmt1 = db.prepare("SELECT * FROM users");
+    stmt1.finalize();
+
+    // Should not crash — new statement is created
+    const stmt2 = db.prepare("SELECT * FROM users");
+    const rows = stmt2.all();
+    expect(rows).toEqual([]);
+
+    db.close();
+  });
+
+  test("prepare.run goes through write queue and returns durationMs", async () => {
+    const db = new BunQL(dbPath);
+    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
+
+    const stmt = db.prepare<unknown, [string]>("INSERT INTO test (val) VALUES (?)");
+    const result = await stmt.run("queued");
+
+    expect(result.changes).toBe(1);
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
 
     db.close();
   });

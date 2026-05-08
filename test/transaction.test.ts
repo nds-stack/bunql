@@ -182,4 +182,23 @@ describe("Transaction", () => {
     await writePromise;
     db.close();
   });
+
+  test("batch inside transaction executes multiple operations atomically", async () => {
+    const db = new BunQL(dbPath);
+    await db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+
+    await db.transaction(async (tx) => {
+      const results = await tx.batch([
+        { sql: "INSERT INTO users (name) VALUES (?)", params: ["Alice"] },
+        { sql: "INSERT INTO users (name) VALUES (?)", params: ["Bob"] },
+      ]);
+      expect(results).toHaveLength(2);
+      expect(results[0]?.changes).toBe(1);
+      expect(results[1]?.changes).toBe(1);
+    });
+
+    const users = db.query<{ name: string }>("SELECT name FROM users ORDER BY id");
+    expect(users.rows).toHaveLength(2);
+    db.close();
+  });
 });

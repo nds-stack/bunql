@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { RetryPolicy } from "../src/retry-policy.ts";
+import { BusyError } from "../src/errors/busy-error.ts";
 
 describe("RetryPolicy", () => {
   test("executes function successfully on first attempt", async () => {
@@ -32,7 +33,22 @@ describe("RetryPolicy", () => {
       policy.execute(async () => {
         throw new Error("database is locked");
       })
-    ).rejects.toThrow("database is locked");
+    ).rejects.toThrow(BusyError);
+  });
+
+  test("BusyError preserves original error as cause", async () => {
+    const policy = new RetryPolicy({ maxRetries: 2, baseDelay: 1, maxDelay: 5, jitter: false });
+
+    try {
+      await policy.execute(async () => {
+        throw new Error("database is locked");
+      });
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeInstanceOf(BusyError);
+      expect((e as BusyError).cause).toBeDefined();
+      expect(((e as BusyError).cause as Error).message).toBe("database is locked");
+    }
   });
 
   test("does not retry non-busy errors", async () => {

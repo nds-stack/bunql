@@ -47,6 +47,14 @@ export class StatementCache {
     return stmt;
   }
 
+  remove(sql: string): void {
+    const entry = this.#cache.get(sql);
+    if (entry) {
+      entry.stmt.finalize();
+      this.#cache.delete(sql);
+    }
+  }
+
   clear(): void {
     for (const entry of this.#cache.values()) {
       entry.stmt.finalize();

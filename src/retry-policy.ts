@@ -1,4 +1,5 @@
 import type { RetryConfig } from "./types/options.ts";
+import { BusyError } from "./errors/busy-error.ts";
 
 export const DEFAULT_RETRY_CONFIG = {
   maxRetries: 5,
@@ -82,6 +83,6 @@ export class RetryPolicy {
       }
     }
 
-    throw lastError ?? new Error("RetryPolicy: operation failed");
+    throw new BusyError("Operation failed after exhausting retries", { cause: lastError ?? undefined });
   }
 }

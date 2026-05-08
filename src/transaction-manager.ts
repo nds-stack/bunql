@@ -1,13 +1,14 @@
-import type { Database, SQLQueryBindings } from "bun:sqlite";
+import type { Database, SQLQueryBindings, Statement as BunStatement } from "bun:sqlite";
 import { TransactionError } from "./errors/transaction-error.ts";
 import type { RunResult, Statement } from "./types/result.ts";
-import type { BunQLHooks, Logger } from "./types/options.ts";
+import type { BunQLHooks, Logger, BatchOperation } from "./types/options.ts";
 import { WriteQueue } from "./write-queue.ts";
 
 export interface TransactionContext {
   run(sql: string, params?: SQLQueryBindings[]): Promise<RunResult>;
   query<T = unknown>(sql: string, params?: SQLQueryBindings[]): T[];
   prepare<T = unknown, P extends SQLQueryBindings[] = SQLQueryBindings[]>(sql: string): Statement<T, P>;
+  batch(operations: BatchOperation[]): Promise<RunResult[]>;
 }
 
 export class TransactionManager {
@@ -40,13 +41,14 @@ export class TransactionManager {
     return this.#writeQueue.enqueue(async () => {
       this.#depth++;
       const startTime = performance.now();
+      const stmtCache = new Map<string, BunStatement>();
       try {
         this.#hooks?.beforeTransaction?.();
         this.#log("debug", "Beginning transaction");
 
         this.#db.run("BEGIN IMMEDIATE");
 
-        const ctx = this.#createContext();
+        const ctx = this.#createContext(stmtCache);
 
         let result: T;
         try {
@@ -61,6 +63,9 @@ export class TransactionManager {
         this.#log("debug", `Transaction committed in ${duration.toFixed(2)}ms`);
         return result;
       } finally {
+        for (const stmt of stmtCache.values()) {
+          stmt.finalize();
+        }
         this.#depth--;
       }
     });
@@ -70,11 +75,12 @@ export class TransactionManager {
     callback: (tx: TransactionContext) => Promise<T>,
   ): Promise<T> {
     const savepoint = `bunql_sp_${++this.#savepointCounter}`;
+    const stmtCache = new Map<string, BunStatement>();
 
     try {
       this.#db.run(`SAVEPOINT ${savepoint}`);
 
-      const ctx = this.#createContext();
+      const ctx = this.#createContext(stmtCache);
 
       let result: T;
       try {
@@ -94,6 +100,10 @@ export class TransactionManager {
       throw new TransactionError("Nested transaction failed", {
         cause: error instanceof Error ? error : undefined,
       });
+    } finally {
+      for (const stmt of stmtCache.values()) {
+        stmt.finalize();
+      }
     }
   }
 
@@ -107,46 +117,63 @@ export class TransactionManager {
     });
   }
 
-  #createContext(): TransactionContext {
+  #createContext(stmtCache: Map<string, BunStatement>): TransactionContext {
+    const getOrPrepare = (sql: string): BunStatement => {
+      let stmt = stmtCache.get(sql);
+      if (!stmt) {
+        stmt = this.#db.prepare(sql);
+        stmtCache.set(sql, stmt);
+      }
+      return stmt;
+    };
+
     const executeRun = (sql: string, params?: SQLQueryBindings[]): RunResult => {
       const start = performance.now();
-      const stmt = this.#db.prepare(sql);
-      try {
-        const result = stmt.run(...(params ?? []));
-        return {
-          changes: result.changes,
-          lastInsertRowid: result.lastInsertRowid,
-          durationMs: performance.now() - start,
-        };
-      } finally {
-        stmt.finalize();
-      }
+      const stmt = getOrPrepare(sql);
+      const result = stmt.run(...(params ?? []));
+      return {
+        changes: result.changes,
+        lastInsertRowid: result.lastInsertRowid,
+        durationMs: performance.now() - start,
+      };
     };
 
     const executeQuery = <T>(sql: string, params?: SQLQueryBindings[]): T[] => {
-      const stmt = this.#db.prepare(sql);
-      try {
-        return stmt.all(...(params ?? [])) as T[];
-      } finally {
-        stmt.finalize();
-      }
+      const stmt = getOrPrepare(sql);
+      return stmt.all(...(params ?? [])) as T[];
     };
 
     const executePrepare = <T, P extends SQLQueryBindings[]>(sql: string): Statement<T, P> => {
-      const stmt = this.#db.prepare(sql);
+      const stmt = getOrPrepare(sql);
       return {
         all: (...params: P): T[] => stmt.all(...params) as T[],
         get: (...params: P): T | undefined => stmt.get(...params) as T | undefined,
-        run: (...params: P): RunResult => {
+        run: (...params: P): Promise<RunResult> => {
+          const start = performance.now();
           const result = stmt.run(...params);
-          return {
+          return Promise.resolve({
             changes: result.changes,
             lastInsertRowid: result.lastInsertRowid,
-            durationMs: 0,
-          };
+            durationMs: performance.now() - start,
+          });
         },
         finalize: () => stmt.finalize(),
       };
+    };
+
+    const executeBatch = async (operations: BatchOperation[]): Promise<RunResult[]> => {
+      const results: RunResult[] = [];
+      for (const op of operations) {
+        const start = performance.now();
+        const stmt = getOrPrepare(op.sql);
+        const raw = stmt.run(...(op.params ?? []));
+        results.push({
+          changes: raw.changes,
+          lastInsertRowid: raw.lastInsertRowid,
+          durationMs: performance.now() - start,
+        });
+      }
+      return results;
     };
 
     return {
@@ -155,6 +182,7 @@ export class TransactionManager {
       },
       query: <T>(sql: string, params?: SQLQueryBindings[]): T[] => executeQuery<T>(sql, params),
       prepare: <T, P extends SQLQueryBindings[]>(sql: string): Statement<T, P> => executePrepare<T, P>(sql),
+      batch: (operations: BatchOperation[]): Promise<RunResult[]> => executeBatch(operations),
     };
   }
 

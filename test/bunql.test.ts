@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { BunQL } from "../src/bunql.ts";
+import { Database } from "bun:sqlite";
+import { BunQL } from "../src/index.ts";
 import { getTestDBPath } from "./helpers/setup.ts";
 import { unlinkSync } from "fs";
 
@@ -168,6 +169,102 @@ describe("BunQL", () => {
     expect(db.queueSize).toBeGreaterThanOrEqual(0);
 
     await Promise.all(runs);
+    db.close();
+  });
+
+  test("raw getter exposes underlying Database", () => {
+    const db = new BunQL(dbPath);
+    expect(db.raw).toBeInstanceOf(Database);
+    const stmt = db.raw.prepare("SELECT 1 AS val");
+    const result = stmt.get() as { val: number };
+    expect(result?.val).toBe(1);
+    db.close();
+  });
+
+  test("raw getter throws after close", () => {
+    const db = new BunQL(dbPath);
+    db.close();
+    expect(() => db.raw).toThrow("Database is closed");
+  });
+
+  test("exec runs multiple SQL statements", async () => {
+    const db = new BunQL(dbPath);
+    await db.exec(`
+      CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT);
+      INSERT INTO test VALUES (1, 'hello');
+      INSERT INTO test VALUES (2, 'world');
+    `);
+    const result = db.query<{ id: number; val: string }>("SELECT * FROM test ORDER BY id");
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows[0]?.val).toBe("hello");
+    expect(result.rows[1]?.val).toBe("world");
+    db.close();
+  });
+
+  test("exec respects write queue serialization", async () => {
+    const db = new BunQL(dbPath);
+    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
+
+    await Promise.all([
+      db.run("INSERT INTO test (val) VALUES ('a')"),
+      db.exec("INSERT INTO test (val) VALUES ('b'); INSERT INTO test (val) VALUES ('c')"),
+      db.run("INSERT INTO test (val) VALUES ('d')"),
+    ]);
+
+    const count = db.query<{ cnt: number }>("SELECT COUNT(*) as cnt FROM test");
+    expect(count.rows[0]?.cnt).toBe(4);
+    db.close();
+  });
+
+  test("PRAGMA options are applied in constructor", () => {
+    const db = new BunQL(dbPath, {
+      synchronous: "FULL",
+      cacheSize: -8000,
+      foreignKeys: true,
+    });
+
+    const syncResult = db.query<{ synchronous: number }>("PRAGMA synchronous");
+    expect(syncResult.rows[0]?.synchronous).toBe(2); // FULL = 2
+
+    const cacheResult = db.query<{ cache_size: number }>("PRAGMA cache_size");
+    expect(cacheResult.rows[0]?.cache_size).toBe(-8000);
+
+    const fkResult = db.query<{ foreign_keys: number }>("PRAGMA foreign_keys");
+    expect(fkResult.rows[0]?.foreign_keys).toBe(1);
+
+    db.close();
+  });
+
+  test("PRAGMA foreignKeys defaults to ON", () => {
+    const db = new BunQL(dbPath);
+    const result = db.query<{ foreign_keys: number }>("PRAGMA foreign_keys");
+    expect(result.rows[0]?.foreign_keys).toBe(1);
+    db.close();
+  });
+
+  test("onError is called when write operation fails", async () => {
+    const errors: Error[] = [];
+    const db = new BunQL(dbPath, {
+      events: {
+        onError: (err) => errors.push(err),
+      },
+    });
+
+    await expect(db.run("INVALID SQL")).rejects.toThrow();
+    expect(errors.length).toBeGreaterThanOrEqual(1);
+    db.close();
+  });
+
+  test("onError is called when exec fails", async () => {
+    const errors: Error[] = [];
+    const db = new BunQL(dbPath, {
+      events: {
+        onError: (err) => errors.push(err),
+      },
+    });
+
+    await expect(db.exec("INVALID SQL")).rejects.toThrow();
+    expect(errors.length).toBeGreaterThanOrEqual(1);
     db.close();
   });
 });

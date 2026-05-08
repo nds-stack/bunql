@@ -26,6 +26,7 @@ export class BunQL {
   #statementCache: StatementCache;
   #closed = false;
   #logger?: Logger;
+  #onError?: (error: Error) => void;
 
   constructor(path: string, options?: BunQLOptions) {
     const config = this.#resolveConfig(options);
@@ -47,6 +48,13 @@ export class BunQL {
 
     if (config.wal) {
       this.#db.run("PRAGMA journal_mode=WAL");
+    }
+
+    this.#db.run(`PRAGMA synchronous=${config.synchronous}`);
+    this.#db.run(`PRAGMA cache_size=${config.cacheSize}`);
+
+    if (config.foreignKeys) {
+      this.#db.run("PRAGMA foreign_keys=ON");
     }
 
     if (config.busyTimeout > 0) {
@@ -77,6 +85,11 @@ export class BunQL {
 
   get isProcessing(): boolean {
     return this.#writeQueue.isProcessing;
+  }
+
+  get raw(): Database {
+    this.#ensureOpen();
+    return this.#db;
   }
 
   query<T = Record<string, unknown>>(sql: string, params?: SQLQueryBindings[]): QueryResult<T> {
@@ -120,9 +133,11 @@ export class BunQL {
       this.#config.hooks?.afterWrite?.(sql, params ?? [], performance.now() - start);
       return result;
     } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.#onError?.(err);
       throw new QueueError(
         "Write operation failed",
-        { cause: error instanceof Error ? error : undefined },
+        { cause: err },
       );
     }
   }
@@ -148,16 +163,19 @@ export class BunQL {
       get: (...params: P): T | undefined => {
         return stmt.get(...params) as T | undefined;
       },
-      run: (...params: P): RunResult => {
-        const result = stmt.run(...params);
-        return {
-          changes: result.changes,
-          lastInsertRowid: result.lastInsertRowid,
-          durationMs: 0,
-        };
+      run: async (...params: P): Promise<RunResult> => {
+        return this.#writeQueue.enqueue(async () => {
+          const start = performance.now();
+          const result = stmt.run(...params);
+          return {
+            changes: result.changes,
+            lastInsertRowid: result.lastInsertRowid,
+            durationMs: performance.now() - start,
+          };
+        });
       },
       finalize: () => {
-        stmt.finalize();
+        this.#statementCache.remove(sql);
       },
     };
   }
@@ -177,7 +195,7 @@ export class BunQL {
           const stmt = this.#db.prepare(op.sql);
 
           try {
-            const raw = stmt.run(...((op.params ?? []) as SQLQueryBindings[]));
+            const raw = stmt.run(...(op.params ?? []));
             const result: RunResult = {
               changes: raw.changes,
               lastInsertRowid: raw.lastInsertRowid,
@@ -194,10 +212,27 @@ export class BunQL {
         return results;
       } catch (error) {
         this.#db.run("ROLLBACK");
+        const err = error instanceof Error ? error : new Error(String(error));
+        this.#onError?.(err);
         throw new QueueError(
           "Batch operation failed, transaction rolled back",
-          { cause: error instanceof Error ? error : undefined },
+          { cause: err },
         );
+      }
+    });
+  }
+
+  async exec(sql: string): Promise<void> {
+    this.#ensureOpen();
+
+    await this.#writeQueue.enqueue(async () => {
+      try {
+        this.#db.exec(sql);
+      } catch (error) {
+        this.#onError?.(error instanceof Error ? error : new Error(String(error)));
+        throw new QueueError("Exec operation failed", {
+          cause: error instanceof Error ? error : undefined,
+        });
       }
     });
   }
@@ -207,7 +242,6 @@ export class BunQL {
     this.#closed = true;
 
     this.#writeQueue.close();
-    this.#writeQueue.clearPending("Database is closing");
 
     try {
       await this.#writeQueue.drain();
@@ -221,9 +255,11 @@ export class BunQL {
       this.#db.close();
       this.#log("info", "Database closed");
     } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.#onError?.(err);
       throw new ConnectionError(
         "Failed to close database",
-        { cause: error instanceof Error ? error : undefined },
+        { cause: err },
       );
     }
   }
@@ -244,6 +280,9 @@ export class BunQL {
       wal: options?.wal ?? true,
       readonly: options?.readonly ?? false,
       busyTimeout: options?.busyTimeout ?? 5000,
+      synchronous: options?.synchronous ?? "NORMAL",
+      cacheSize: options?.cacheSize ?? -2000,
+      foreignKeys: options?.foreignKeys ?? true,
       retry,
       logger: options?.logger,
       hooks: options?.hooks,
@@ -264,6 +303,10 @@ export class BunQL {
 
     if (events.onDrain) {
       this.#writeQueue.onDrain = events.onDrain;
+    }
+
+    if (events.onError) {
+      this.#onError = events.onError;
     }
   }
 
