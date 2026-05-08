@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.3] - 2026-05-08
+
+### Documentation
+- Update README with new API (`exec`, `raw`, `tx.batch()`, PRAGMA options)
+- Update benchmarks with latest performance numbers
+- Fix `Statement.run()` return type to `Promise<RunResult>`
+- Update stability count from 84 to 96 tests
+
 ## [0.1.0-alpha.2] - 2026-05-08
 
 ### Performance
