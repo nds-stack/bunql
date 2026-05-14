@@ -3,7 +3,7 @@
 > Lightweight SQLite wrapper for Bun — queued writes, serialized transactions, SQLITE_BUSY handling.
 
 [![npm version](https://img.shields.io/npm/v/%40nds-stack%2Fbunql?color=blue&logo=npm)](https://www.npmjs.com/package/@nds-stack/bunql)
-[![Bun](https://img.shields.io/badge/Bun-%3E%3D1.0.0-black?logo=bun)](https://bun.sh)
+[![Bun](https://img.shields.io/badge/Bun-%3E%3D1.3.0-black?logo=bun)](https://bun.sh)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue?logo=typescript)](https://www.typescriptlang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -298,8 +298,8 @@ import { BunQL } from "@nds-stack/bunql";
 
 const db = new BunQL("./app.db", {
   maintenance: {
-    checkpoint: { enabled: true, pagesThreshold: 1000, mode: "TRUNCATE" },
-    vacuum: { enabled: true, mode: "incremental", pagesPerStep: 100 },
+    checkpoint: { enabled: true, intervalMs: 60000, pagesThreshold: 1000, mode: "TRUNCATE" },
+    vacuum: { enabled: true, intervalMs: 60000, mode: "incremental", pagesPerStep: 100 },
     backup: { enabled: true, intervalMs: 86_400_000, path: "./backups/" },
   },
   slowQueryThreshold: 100,  // ms — log queries slower than this
@@ -513,7 +513,7 @@ interface FTSResult {
 | Reads | Direct | Cached (LRU, max 100) |
 | Prepared stmts | Manual manage | Auto-cached, reused |
 | Graceful shutdown | Manual | Queue drain + cache finalize |
-| Bundle size | Built-in | +22.7KB core / +6.5KB server |
+| Bundle size | Built-in | +30.8KB core / +4.9KB server |
 
 bunql is not a replacement for `bun:sqlite` — it's a **safety layer** on top. You still write raw SQL. The wrapper handles what developers consistently get wrong: concurrency, error recovery, and resource cleanup.
 
