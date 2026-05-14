@@ -1,3 +1,7 @@
+/**
+ * @module transaction-manager
+ * @description Serialized transaction execution with SAVEPOINT nesting support.
+ */
 import type { Database, SQLQueryBindings, Statement as BunStatement } from "bun:sqlite";
 import { TransactionError } from "./errors/transaction-error.ts";
 import type { RunResult, Statement } from "./types/result.ts";
@@ -74,6 +78,7 @@ export class TransactionManager {
   async #nestedTransaction<T>(
     callback: (tx: TransactionContext) => Promise<T>,
   ): Promise<T> {
+    const startTime = performance.now();
     const savepoint = `bunql_sp_${++this.#savepointCounter}`;
     const stmtCache = new Map<string, BunStatement>();
 
@@ -86,6 +91,8 @@ export class TransactionManager {
       try {
         result = await callback(ctx);
       } catch (error) {
+        const duration = performance.now() - startTime;
+        this.#hooks?.afterTransaction?.(duration, false);
         this.#db.run(`ROLLBACK TO ${savepoint}`);
         this.#log("debug", `Rolled back to savepoint: ${savepoint}`);
         throw new TransactionError("Nested transaction failed, rolled back to savepoint", {

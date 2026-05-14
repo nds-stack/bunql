@@ -1,3 +1,7 @@
+/**
+ * @module queue-error
+ * @description Error thrown on WriteQueue operation failures.
+ */
 import { BunQLError } from "./bunql-error.ts";
 
 export class QueueError extends BunQLError {

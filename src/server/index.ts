@@ -1,3 +1,7 @@
+/**
+ * @module server
+ * @description BunQLServer — optional HTTP bridge over BunQL.
+ */
 import type { BunQL } from "../bunql.ts";
 import type { ServerOptions } from "../types/result.ts";
 import { createHandler } from "./http-handler.ts";
@@ -43,13 +47,13 @@ export class BunQLServer {
       },
     });
 
-    console.log(`[BunQLServer] Listening on http://${this.#options.host}:${this.#options.port}`);
+    console.log(`[BunQLServer] Listening on http://${this.#options.host}:${this.#options.port}`); // eslint-disable-line no-console
   }
 
   stop(): void {
     this.#server?.stop();
     this.#server = null;
-    console.log("[BunQLServer] Stopped");
+    console.log("[BunQLServer] Stopped"); // eslint-disable-line no-console
   }
 
   get url(): string | null {

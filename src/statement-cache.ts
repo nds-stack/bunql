@@ -1,3 +1,7 @@
+/**
+ * @module statement-cache
+ * @description LRU cache for prepared statements with automatic eviction.
+ */
 import type { Database, Statement as BunStatement } from "bun:sqlite";
 
 interface CacheEntry {

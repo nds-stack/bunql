@@ -1,3 +1,7 @@
+/**
+ * @module write-queue
+ * @description FIFO async queue for serializing write operations.
+ */
 import Queue from "yocto-queue";
 import { QueueError } from "./errors/queue-error.ts";
 

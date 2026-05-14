@@ -1,3 +1,7 @@
+/**
+ * @module http-handler
+ * @description HTTP request handler for BunQLServer.
+ */
 import type { BunQL } from "../bunql.ts";
 import type { ServerOptions } from "../types/result.ts";
 import type { SQLQueryBindings } from "bun:sqlite";

@@ -1,3 +1,7 @@
+/**
+ * @module index
+ * @description Main entry point — re-exports public API.
+ */
 export { BunQL } from "./bunql.ts";
 export type {
   BunQLOptions,

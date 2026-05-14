@@ -128,3 +128,19 @@
 - Added guidance for when to use bunql vs PostgreSQL/MySQL
 
 ## [Unreleased]
+
+## [0.1.0-alpha.7] - 2026-05-15
+
+### Fixed
+- Deadlock in maintenance scheduler: `#startMaintenance` no longer calls `walStatus()`/`checkpoint()` through WriteQueue while already inside a queue callback. Added `#checkpointDirect()` and `#walStatusDirect()` for internal use.
+- Maintenance interval used `pagesThreshold` (page count) as timer interval (ms). Added `intervalMs` config field for checkpoint and vacuum, default 60000ms.
+- Backup path sanitization: `VACUUM INTO` path now validated with `#validateBackupPath()` before execution.
+- Silent `.catch(() => {})` in maintenance scheduler replaced with proper error logging.
+
+### Changed
+- `readerPool` and `readerPoolSize` options consolidated to `readerPool`. `readerPoolSize` still accepted for backward compatibility.
+- Nested transaction rollback now triggers `afterTransaction` hook (false).
+- Added `@module` JSDoc headers to all source files.
+
+### Removed
+- `readerPoolSize` from `BunQLOptions` type definition (deprecated).

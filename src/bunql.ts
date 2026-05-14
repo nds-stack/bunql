@@ -1,3 +1,7 @@
+/**
+ * @module bunql
+ * @description BunQL facade — main entry point, thin wrapper over bun:sqlite.
+ */
 import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { statSync } from "fs";
 import { WriteQueue } from "./write-queue.ts";
@@ -313,50 +317,21 @@ export class BunQL {
 
   async checkpoint(mode: CheckpointMode = "PASSIVE"): Promise<CheckpointResult> {
     this.#ensureOpen();
-    const modeMap: Record<CheckpointMode, number> = {
-      PASSIVE: 0, FULL: 1, RESTART: 2, TRUNCATE: 3,
-    };
-
     return this.#writeQueue.enqueue(async () => {
-      const row = this.#db
-        .prepare(`PRAGMA wal_checkpoint(${modeMap[mode]})`)
-        .get() as Record<string, number>;
-      const pageSize = (this.#db
-        .prepare("PRAGMA page_size")
-        .get() as Record<string, number>)?.["page_size"] ?? 4096;
-      return {
-        pagesCheckpointed: row?.[2] ?? 0,
-        walSizeBytes: (row?.[1] ?? 0) * pageSize,
-      };
+      return this.#checkpointDirect(mode);
     });
   }
 
   async walStatus(): Promise<WalStatus> {
     this.#ensureOpen();
-
     return this.#writeQueue.enqueue(async () => {
-      const pageSize = (this.#db
-        .prepare("PRAGMA page_size")
-        .get() as Record<string, number>)?.["page_size"] ?? 4096;
-      const pageCount = (this.#db
-        .prepare("PRAGMA page_count")
-        .get() as Record<string, number>)?.["page_count"] ?? 0;
-      const row = this.#db
-        .prepare("PRAGMA wal_checkpoint(0)")
-        .get() as Record<string, number>;
-
-      return {
-        walSizePages: row?.[1] ?? 0,
-        pageSize,
-        pageCount,
-        checkpointRequired: (row?.[1] ?? 0) > 100,
-        lastCheckpointPages: row?.[2] ?? 0,
-      };
+      return this.#walStatusDirect();
     });
   }
 
   async backup(path: string): Promise<BackupResult> {
     this.#ensureOpen();
+    this.#validateBackupPath(path);
     const start = performance.now();
 
     await this.#writeQueue.enqueue(async () => {
@@ -428,6 +403,49 @@ export class BunQL {
     }
   }
 
+  #validateBackupPath(path: string): void {
+    if (!/^[\w./_-]+$/.test(path)) {
+      throw new Error(
+        `Invalid backup path: ${path}. Only alphanumeric, /, _, -, . allowed.`,
+      );
+    }
+  }
+
+  #checkpointDirect(mode: CheckpointMode = "PASSIVE"): CheckpointResult {
+    const modeMap: Record<CheckpointMode, number> = {
+      PASSIVE: 0, FULL: 1, RESTART: 2, TRUNCATE: 3,
+    };
+    const row = this.#db
+      .prepare(`PRAGMA wal_checkpoint(${modeMap[mode]})`)
+      .get() as Record<string, number>;
+    const pageSize = (this.#db
+      .prepare("PRAGMA page_size")
+      .get() as Record<string, number>)?.["page_size"] ?? 4096;
+    return {
+      pagesCheckpointed: row?.[2] ?? 0,
+      walSizeBytes: (row?.[1] ?? 0) * pageSize,
+    };
+  }
+
+  #walStatusDirect(): WalStatus {
+    const pageSize = (this.#db
+      .prepare("PRAGMA page_size")
+      .get() as Record<string, number>)?.["page_size"] ?? 4096;
+    const pageCount = (this.#db
+      .prepare("PRAGMA page_count")
+      .get() as Record<string, number>)?.["page_count"] ?? 0;
+    const row = this.#db
+      .prepare("PRAGMA wal_checkpoint(0)")
+      .get() as Record<string, number>;
+    return {
+      walSizePages: row?.[1] ?? 0,
+      pageSize,
+      pageCount,
+      checkpointRequired: (row?.[1] ?? 0) > 100,
+      lastCheckpointPages: row?.[2] ?? 0,
+    };
+  }
+
   #ensureOpen(): void {
     if (this.#closed) {
       throw new ConnectionError("Database is closed. No operations allowed.");
@@ -440,7 +458,7 @@ export class BunQL {
       ...options?.retry,
     };
 
-    const readerPoolSize = options?.readerPool ?? options?.readerPoolSize ?? 0;
+    const readerPoolSize = options?.readerPool ?? (options as Record<string, unknown>)?.["readerPoolSize"] as number ?? 0;
 
     return {
       wal: options?.wal ?? true,
@@ -486,10 +504,10 @@ export class BunQL {
     const intervals: number[] = [];
 
     if (maintenance.checkpoint?.enabled) {
-      intervals.push(maintenance.checkpoint.pagesThreshold ?? 60000);
+      intervals.push(maintenance.checkpoint.intervalMs ?? 60000);
     }
     if (maintenance.vacuum?.enabled) {
-      intervals.push(maintenance.vacuum.pagesPerStep ?? 60000);
+      intervals.push(maintenance.vacuum.intervalMs ?? 60000);
     }
     if (maintenance.backup?.enabled) {
       intervals.push(maintenance.backup.intervalMs);
@@ -506,26 +524,26 @@ export class BunQL {
       this.#writeQueue.enqueue(async () => {
         try {
           if (maintenance.checkpoint?.enabled) {
-            const status = await this.walStatus();
-            if (status.walSizePages > (maintenance.checkpoint!.pagesThreshold ?? 1000)) {
-              await this.checkpoint(maintenance.checkpoint!.mode ?? "TRUNCATE");
+            const status = this.#walStatusDirect();
+            if (status.walSizePages > (maintenance.checkpoint.pagesThreshold ?? 1000)) {
+              this.#checkpointDirect(maintenance.checkpoint.mode ?? "TRUNCATE");
             }
           }
           if (maintenance.vacuum?.enabled) {
-            const mode = maintenance.vacuum!.mode ?? "incremental";
-            if (mode === "incremental") {
-              await this.vacuum({ incremental: true, pagesPerStep: maintenance.vacuum!.pagesPerStep ?? 100 });
+            const pages = maintenance.vacuum.pagesPerStep ?? 100;
+            if (maintenance.vacuum.mode !== "full") {
+              this.#db.exec(`PRAGMA incremental_vacuum(${pages})`);
             }
           }
           if (maintenance.backup?.enabled) {
             const ts = new Date().toISOString().replace(/[:.]/g, "-");
-            const backupPath = `${maintenance.backup!.path.replace(/\/$/, "")}/bunql-backup-${ts}.db`;
-            await this.backup(backupPath);
+            const path = `${maintenance.backup.path.replace(/\/$/, "")}/bunql-backup-${ts}.db`;
+            this.#db.exec(`VACUUM INTO '${path.replace(/'/g, "''")}'`);
           }
         } catch (error) {
           this.#log("error", `Maintenance task failed: ${error}`);
         }
-      }).catch(() => {});
+      }).catch((err) => this.#log("error", `Maintenance enqueue failed: ${err}`));
     }, intervalMs);
   }
 

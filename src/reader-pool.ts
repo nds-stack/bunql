@@ -1,3 +1,7 @@
+/**
+ * @module reader-pool
+ * @description Multi-connection read pool for parallel read queries.
+ */
 import { Database } from "bun:sqlite";
 import { ConnectionError } from "./errors/connection-error.ts";
 import { StatementCache } from "./statement-cache.ts";

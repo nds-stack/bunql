@@ -1,3 +1,7 @@
+/**
+ * @module types-result
+ * @description Result type definitions for all API methods.
+ */
 export interface QueryResult<T = unknown> {
   rows: T[];
   columns: string[];

@@ -1,3 +1,7 @@
+/**
+ * @module types-options
+ * @description Configuration and option type definitions.
+ */
 import type { SQLQueryBindings } from "bun:sqlite";
 import type { CheckpointMode } from "./result.ts";
 
@@ -11,11 +15,13 @@ export interface RetryConfig {
 export interface MaintenanceConfig {
   checkpoint?: {
     enabled: boolean;
+    intervalMs?: number;
     pagesThreshold?: number;
     mode?: CheckpointMode;
   };
   vacuum?: {
     enabled: boolean;
+    intervalMs?: number;
     mode?: "incremental" | "full";
     pagesPerStep?: number;
   };
@@ -49,7 +55,6 @@ export interface BunQLOptions {
   hooks?: BunQLHooks;
   events?: EventHandlers;
   readerPool?: number;
-  readerPoolSize?: number;
   maintenance?: MaintenanceConfig;
   slowQueryThreshold?: number;
   pragma?: {

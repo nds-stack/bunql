@@ -1,3 +1,7 @@
+/**
+ * @module transaction-error
+ * @description Error thrown on transaction failures.
+ */
 import { BunQLError } from "./bunql-error.ts";
 
 export class TransactionError extends BunQLError {

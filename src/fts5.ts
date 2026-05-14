@@ -1,3 +1,7 @@
+/**
+ * @module fts5
+ * @description FTS5 full-text search helper — create, search, insert, delete, update, rebuild, merge, optimize, drop, rank.
+ */
 import type { Database, SQLQueryBindings } from "bun:sqlite";
 import type { FTS5Options } from "./types/options.ts";
 import type { FTSResult } from "./types/result.ts";

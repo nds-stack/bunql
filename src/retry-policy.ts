@@ -1,3 +1,7 @@
+/**
+ * @module retry-policy
+ * @description Exponential backoff with jitter for SQLITE_BUSY retry strategy.
+ */
 import type { RetryConfig } from "./types/options.ts";
 import { BusyError } from "./errors/busy-error.ts";
 
