@@ -10,6 +10,9 @@ dist
 coverage
 *.lcov
 
+# AI agent files
+agents/
+
 # logs
 logs
 _.log
@@ -38,3 +41,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 *.db-shm
 *.db-wal
 *.zip
+AGENTS.md
+PROJECT.md
+RULES.md
+TODO.md
