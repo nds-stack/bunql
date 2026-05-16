@@ -1,4 +1,7 @@
 {
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "@nds-stack/bunql",
+  "description": "SQLite wrapper for Bun — queued writes, serialized transactions, SQLITE_BUSY handling, FTS5",
   "url": "https://context7.com/nds-stack/bunql",
   "public_key": "pk_Zd1vpPPhPhvxg6ZjZWp5g"
 }
