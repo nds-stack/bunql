@@ -159,7 +159,7 @@ await Promise.all(writes);
 ### Transaction with Error Recovery
 
 ```typescript
-import { BunQL, TransactionError } from "@nds-stack/bunql";
+import { BunQL } from "@nds-stack/bunql";
 
 const db = new BunQL("./app.db");
 
@@ -169,10 +169,8 @@ try {
     await tx.run("UPDATE accounts SET balance = balance + 100 WHERE id = 2");
   });
 } catch (error) {
-  if (error instanceof TransactionError) {
-    console.error("Transaction failed:", error.cause);
-    // error.cause contains the original error
-  }
+  // Original error is re-thrown directly — no TransactionError wrapper
+  console.error("Transaction failed:", error);
 }
 ```
 
@@ -270,11 +268,11 @@ import { BunQL } from "@nds-stack/bunql";
 
 const db = new BunQL("./app.db");
 
-// Setup
-await db.fts.create("articles", ["title", "body"]);
+// Setup (synchronous — no await needed)
+db.fts.create("articles", ["title", "body"]);
 
 // Insert
-await db.fts.insert("articles", {
+db.fts.insert("articles", {
   title: "Hello SQLite",
   body: "SQLite FTS5 is a powerful full-text search engine",
 });
@@ -285,10 +283,10 @@ const results = db.fts.search("articles", "sqlite", {
   snippet: { startTag: "<b>", endTag: "</b>" },
 });
 
-// Index maintenance
-await db.fts.optimize("articles");
-await db.fts.rebuild("articles");
-await db.fts.drop("articles");
+// Index maintenance (synchronous)
+db.fts.optimize("articles");
+db.fts.rebuild("articles");
+db.fts.drop("articles");
 ```
 
 ### Maintenance & Auto-Scheduling
@@ -447,6 +445,43 @@ interface FTSResult {
 
 ---
 
+## Migrating from v0.1.0-alpha.x
+
+### Transaction errors no longer wrapped
+
+```diff
+- import { BunQL, TransactionError } from "@nds-stack/bunql";
++ import { BunQL } from "@nds-stack/bunql";
+
+  try {
+    await db.transaction(async (tx) => { ... });
+  } catch (error) {
+-   if (error instanceof TransactionError) { ... }
++   // Original error is re-thrown directly
++   console.error(error);
+  }
+```
+
+### FTS5 methods are synchronous
+
+```diff
+- await db.fts.create("articles", ["title", "body"]);
+- await db.fts.insert("articles", { title: "...", body: "..." });
++ db.fts.create("articles", ["title", "body"]);
++ db.fts.insert("articles", { title: "...", body: "..." });
+```
+
+### Reader pool requires WAL mode
+
+```typescript
+const db = new BunQL("./app.db", {
+  wal: true,  // required when readerPool > 0
+  readerPool: 3,
+});
+```
+
+---
+
 ## Architecture
 
 ```
@@ -485,7 +520,7 @@ interface FTSResult {
 1. `transaction()` enters WriteQueue (serialized with writes)
 2. `BEGIN IMMEDIATE` — prevents concurrent writers
 3. Callback receives `TransactionContext` with `run()` / `query()` / `batch()` / `prepare()`
-4. Success → `COMMIT`. Failure → `ROLLBACK` (original error in `cause`)
+4. Success → `COMMIT`. Failure → `ROLLBACK` (original error re-thrown directly, no wrapper)
 5. Nested transactions use SQLite **SAVEPOINT** for isolation
 
 ### Key Design Decisions
@@ -498,7 +533,7 @@ interface FTSResult {
 | `raw` getter exposed | Users need escape hatch for PRAGMA kustom, VACUUM, dll. |
 | Linked-list queue | `yocto-queue` untuk O(1) dequeue, bukan `Array.shift()` O(n). |
 | Microtask-deferred queue | All synchronous enqueues complete before processing starts. |
-| Error chain preserved | `error.cause` always contains the original error. |
+| Original error preserved | Transaction errors re-thrown directly, no wrapper. |
 
 ---
 
@@ -509,11 +544,11 @@ interface FTSResult {
 | API surface | Low-level, direct | Same SQL, added convenience |
 | Write concurrency | Manual retry needed | Automatic queue + retry |
 | Transactions | Manual BEGIN/COMMIT | Scoped callbacks with auto-rollback |
-| Error handling | Raw SQLite errors | Typed `BunQLError` hierarchy with `cause` |
+| Error handling | Raw SQLite errors | Typed `BunQLError` hierarchy; original errors preserved |
 | Reads | Direct | Cached (LRU, max 100) |
 | Prepared stmts | Manual manage | Auto-cached, reused |
 | Graceful shutdown | Manual | Queue drain + cache finalize |
-| Bundle size | Built-in | +30.8KB core / +4.9KB server |
+| Bundle size | Built-in | +32.4KB core / +5.0KB server |
 
 bunql is not a replacement for `bun:sqlite` — it's a **safety layer** on top. You still write raw SQL. The wrapper handles what developers consistently get wrong: concurrency, error recovery, and resource cleanup.
 
@@ -521,7 +556,7 @@ bunql is not a replacement for `bun:sqlite` — it's a **safety layer** on top. 
 
 ## Benchmarks
 
-Environment: Bun v1.3.13, Windows x64, 500 iterations per test.
+Environment: Bun v1.3.14, Windows x64, 500 iterations per test.
 Both benchmarks use identical PRAGMA settings: `WAL`, `synchronous=NORMAL`, `cache_size=-2000`, `foreign_keys=ON`.
 Results may vary ±30% between runs due to system load and disk caching.
 
@@ -529,20 +564,20 @@ Results may vary ±30% between runs due to system load and disk caching.
 
 | Operation | Raw `bun:sqlite` | `@nds-stack/bunql` | Overhead |
 |-----------|-----------------|--------------------|----------|
-| Point read | 220K ops/s | 180K ops/s | -18% |
-| Single write | 25K ops/s | 20K ops/s | -20% |
-| 10 concurrent writes | 45K ops/s * | 30K ops/s | -33% |
-| 50 concurrent writes | 22K ops/s * | 18K ops/s | -18% |
+| Point read | 336K ops/s | 252K ops/s | -25% |
+| Single write | 22K ops/s | 23K ops/s | +4.5% |
+| 10 concurrent writes | 28K ops/s * | 56K ops/s * | +100% |
+| 50 concurrent writes | 26K ops/s * | 34K ops/s * | +30% |
 
-> \* Raw concurrent benchmark includes manual retry logic with exponential backoff (same strategy as BunQL). Without retry, raw `bun:sqlite` would throw `SQLITE_BUSY`. BunQL eliminates the need for manual retry entirely — writes are serialized, reads are parallel. The ~20% overhead is the cost of guaranteed-safe concurrency.
+> \* BunQL serializes writes through the queue. Under contention, throughput can exceed raw `bun:sqlite` because the queue eliminates retry overhead entirely.
 
 ### Realistic Workloads
 
 | Workload | Description | Throughput |
 |----------|-------------|-----------|
-| Mixed | Interleaved reads/writes/transactions | 28K ops/s |
-| Batch | 25 writes per transaction (10 batches) | 200K ops/s |
-| Cache pressure | 200 unique queries (triggers evictions) | 28K ops/s |
+| Mixed | 167r + 167w + 166tx | 28.5K ops/s |
+| Batch | 500 writes in 2.4ms | 207K ops/s |
+| Cache pressure | 200 unique queries (triggers evictions) | 36.4K ops/s |
 
 ---
 
@@ -557,6 +592,7 @@ Results may vary ±30% between runs due to system load and disk caching.
 
 ## Stability
 
+- **v0.1.0 (stable)** — first stable release
 - **111 tests** — unit, integration, concurrency, stress, FTS5, reader pool
 - **5000 sequential writes** — verified stable
 - **Graceful shutdown** — drain queue → finalize statements → close DB

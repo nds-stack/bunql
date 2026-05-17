@@ -2,7 +2,7 @@
  * @module bunql
  * @description BunQL facade — main entry point, thin wrapper over bun:sqlite.
  */
-import { Database, type SQLQueryBindings } from "bun:sqlite";
+import { Database, type Statement as BunStatement, type SQLQueryBindings } from "bun:sqlite";
 import { statSync } from "fs";
 import { WriteQueue } from "./write-queue.ts";
 import { RetryPolicy, DEFAULT_RETRY_CONFIG } from "./retry-policy.ts";
@@ -15,6 +15,7 @@ import { QueueError } from "./errors/queue-error.ts";
 import type {
   BunQLOptions,
   BunQLConfig,
+  BunQLHooks,
   QueryResult,
   RunResult,
   Statement,
@@ -31,6 +32,28 @@ import type {
   VacuumResult,
   MaintenanceConfig,
 } from "./types/index.ts";
+
+function executeBatchOperations(
+  operations: BatchOperation[],
+  getStmt: (sql: string) => BunStatement,
+  hooks?: BunQLHooks,
+): RunResult[] {
+  const results: RunResult[] = [];
+  for (const op of operations) {
+    hooks?.beforeWrite?.(op.sql, op.params ?? []);
+    const start = performance.now();
+    const stmt = getStmt(op.sql);
+    const raw = stmt.run(...(op.params ?? []));
+    const result: RunResult = {
+      changes: raw.changes,
+      lastInsertRowid: raw.lastInsertRowid,
+      durationMs: performance.now() - start,
+    };
+    results.push(result);
+    hooks?.afterWrite?.(op.sql, op.params ?? [], performance.now() - start);
+  }
+  return results;
+}
 
 export class BunQL {
   #db: Database;
@@ -101,6 +124,11 @@ export class BunQL {
     this.#fts5 = new FTS5Helper(this.#db);
 
     if (config.readerPoolSize > 0) {
+      if (!config.wal) {
+        throw new ConnectionError(
+          "Reader pool requires WAL mode. Set `wal: true` or remove `readerPool` option.",
+        );
+      }
       this.#readerPool = new ReaderPool(path, config.readerPoolSize);
     }
 
@@ -144,11 +172,18 @@ export class BunQL {
   }
 
   get cacheStats(): CacheStats {
-    const hits = this.#statementCache.hits;
-    const misses = this.#statementCache.misses;
+    let hits = this.#statementCache.hits;
+    let misses = this.#statementCache.misses;
+
+    if (this.#readerPool) {
+      const poolStats = this.#readerPool.cacheStats();
+      hits += poolStats.hits;
+      misses += poolStats.misses;
+    }
+
     const total = hits + misses;
     return {
-      size: this.#statementCache.size,
+      size: this.#statementCache.size + (this.#readerPool?.cacheStats().size ?? 0),
       hits,
       misses,
       hitRate: total > 0 ? hits / total : 0,
@@ -266,29 +301,15 @@ export class BunQL {
   async batch(operations: BatchOperation[]): Promise<RunResult[]> {
     this.#ensureOpen();
 
+    this.#metrics.writes.total++;
     return this.#writeQueue.enqueue(async () => {
-      const results: RunResult[] = [];
-
       try {
         this.#db.run("BEGIN IMMEDIATE");
-
-        for (const op of operations) {
-          this.#config.hooks?.beforeWrite?.(op.sql, op.params ?? []);
-          const start = performance.now();
-          const stmt = this.#statementCache.get(op.sql);
-          const raw = stmt.run(...(op.params ?? []));
-          const result: RunResult = {
-            changes: raw.changes,
-            lastInsertRowid: raw.lastInsertRowid,
-            durationMs: performance.now() - start,
-          };
-          results.push(result);
-          this.#config.hooks?.afterWrite?.(op.sql, op.params ?? [], performance.now() - start);
-        }
-
+        const results = executeBatchOperations(operations, (sql) => this.#statementCache.get(sql), this.#config.hooks);
         this.#db.run("COMMIT");
         return results;
       } catch (error) {
+        this.#metrics.writes.failed++;
         this.#db.run("ROLLBACK");
         const err = error instanceof Error ? error : new Error(String(error));
         this.#onError?.(err);
@@ -303,10 +324,12 @@ export class BunQL {
   async exec(sql: string): Promise<void> {
     this.#ensureOpen();
 
+    this.#metrics.writes.total++;
     await this.#writeQueue.enqueue(async () => {
       try {
         this.#db.exec(sql);
       } catch (error) {
+        this.#metrics.writes.failed++;
         this.#onError?.(error instanceof Error ? error : new Error(String(error)));
         throw new QueueError("Exec operation failed", {
           cause: error instanceof Error ? error : undefined,
@@ -409,6 +432,17 @@ export class BunQL {
         `Invalid backup path: ${path}. Only alphanumeric, /, _, -, . allowed.`,
       );
     }
+    if (path.includes("..")) {
+      throw new Error(
+        `Invalid backup path: ${path}. Path traversal (..) is not allowed.`,
+      );
+    }
+  }
+
+  #getPageSize(): number {
+    return (this.#db
+      .prepare("PRAGMA page_size")
+      .get() as Record<string, number>)?.["page_size"] ?? 4096;
   }
 
   #checkpointDirect(mode: CheckpointMode = "PASSIVE"): CheckpointResult {
@@ -418,9 +452,7 @@ export class BunQL {
     const row = this.#db
       .prepare(`PRAGMA wal_checkpoint(${modeMap[mode]})`)
       .get() as Record<string, number>;
-    const pageSize = (this.#db
-      .prepare("PRAGMA page_size")
-      .get() as Record<string, number>)?.["page_size"] ?? 4096;
+    const pageSize = this.#getPageSize();
     return {
       pagesCheckpointed: row?.[2] ?? 0,
       walSizeBytes: (row?.[1] ?? 0) * pageSize,
@@ -428,9 +460,7 @@ export class BunQL {
   }
 
   #walStatusDirect(): WalStatus {
-    const pageSize = (this.#db
-      .prepare("PRAGMA page_size")
-      .get() as Record<string, number>)?.["page_size"] ?? 4096;
+    const pageSize = this.#getPageSize();
     const pageCount = (this.#db
       .prepare("PRAGMA page_count")
       .get() as Record<string, number>)?.["page_count"] ?? 0;
@@ -458,7 +488,7 @@ export class BunQL {
       ...options?.retry,
     };
 
-    const readerPoolSize = options?.readerPool ?? (options as Record<string, unknown>)?.["readerPoolSize"] as number ?? 0;
+    const readerPoolSize = options?.readerPool ?? 0;
 
     return {
       wal: options?.wal ?? true,
@@ -521,6 +551,7 @@ export class BunQL {
     const intervalMs = Math.min(...intervals);
 
     this.#maintenanceTimer = setInterval(() => {
+      if (this.#closed) return;
       this.#writeQueue.enqueue(async () => {
         try {
           if (maintenance.checkpoint?.enabled) {

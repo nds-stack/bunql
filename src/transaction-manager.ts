@@ -3,7 +3,6 @@
  * @description Serialized transaction execution with SAVEPOINT nesting support.
  */
 import type { Database, SQLQueryBindings, Statement as BunStatement } from "bun:sqlite";
-import { TransactionError } from "./errors/transaction-error.ts";
 import type { RunResult, Statement } from "./types/result.ts";
 import type { BunQLHooks, Logger, BatchOperation } from "./types/options.ts";
 import { WriteQueue } from "./write-queue.ts";
@@ -58,7 +57,12 @@ export class TransactionManager {
         try {
           result = await callback(ctx);
         } catch (error) {
-          this.#rollback(startTime, error instanceof Error ? error : undefined);
+          const originalError = error instanceof Error ? error : new Error(String(error));
+          this.#db.run("ROLLBACK");
+          const duration = performance.now() - startTime;
+          this.#hooks?.afterTransaction?.(duration, false);
+          this.#log("warn", "Transaction rolled back");
+          throw originalError;
         }
 
         this.#db.run("COMMIT");
@@ -91,37 +95,21 @@ export class TransactionManager {
       try {
         result = await callback(ctx);
       } catch (error) {
+        const originalError = error instanceof Error ? error : new Error(String(error));
         const duration = performance.now() - startTime;
         this.#hooks?.afterTransaction?.(duration, false);
         this.#db.run(`ROLLBACK TO ${savepoint}`);
         this.#log("debug", `Rolled back to savepoint: ${savepoint}`);
-        throw new TransactionError("Nested transaction failed, rolled back to savepoint", {
-          cause: error instanceof Error ? error : undefined,
-        });
+        throw originalError;
       }
 
       this.#db.run(`RELEASE ${savepoint}`);
       return result;
-    } catch (error) {
-      if (error instanceof TransactionError) throw error;
-      throw new TransactionError("Nested transaction failed", {
-        cause: error instanceof Error ? error : undefined,
-      });
     } finally {
       for (const stmt of stmtCache.values()) {
         stmt.finalize();
       }
     }
-  }
-
-  #rollback(startTime: number, originalError?: Error): never {
-    this.#db.run("ROLLBACK");
-    const duration = performance.now() - startTime;
-    this.#hooks?.afterTransaction?.(duration, false);
-    this.#log("warn", "Transaction rolled back");
-    throw new TransactionError("Transaction failed and was rolled back", {
-      cause: originalError,
-    });
   }
 
   #createContext(stmtCache: Map<string, BunStatement>): TransactionContext {

@@ -1,9 +1,7 @@
 agents/
-AGENTS.md
-PROJECT.md
-RULES.md
-TODO.md
-CHANGELOG.md
+# Markdown docs (keep only README)
+*.md
+!README.md
 test/
 bench/
 examples/
@@ -11,4 +9,3 @@ examples/
 tsconfig.json
 *.test.ts
 *.bench.ts
-session

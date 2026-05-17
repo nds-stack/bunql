@@ -42,10 +42,26 @@ export class ReaderPool {
     return entry;
   }
 
+  cacheStats(): { hits: number; misses: number; size: number } {
+    let hits = 0;
+    let misses = 0;
+    let size = 0;
+    for (const entry of this.#entries) {
+      hits += entry.cache.hits;
+      misses += entry.cache.misses;
+      size += entry.cache.size;
+    }
+    return { hits, misses, size };
+  }
+
   close(): void {
     for (const entry of this.#entries) {
       entry.cache.clear();
-      try { entry.db.close(); } catch { /* ignore */ }
+      try {
+        entry.db.close();
+      } catch (error) {
+        console.error("[BunQL:ReaderPool] Error closing reader connection:", error); // eslint-disable-line no-console
+      }
     }
     this.#entries = [];
   }

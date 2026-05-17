@@ -41,9 +41,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 *.db-shm
 *.db-wal
 *.zip
-AGENTS.md
-PROJECT.md
-RULES.md
-TODO.md
-CHANGELOG.md
-session
+# Markdown docs (keep README + CHANGELOG)
+*.md
+!README.md
+!CHANGELOG.md

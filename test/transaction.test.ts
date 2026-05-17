@@ -50,10 +50,8 @@ describe("Transaction", () => {
       });
       expect.unreachable();
     } catch (e) {
-      expect((e as Error).message).toBe("Transaction failed and was rolled back");
-      // Original error should be preserved in cause
-      expect((e as Error).cause).toBeDefined();
-      expect(((e as Error).cause as Error).message).toBe("something went wrong");
+      expect((e as Error).message).toBe("something went wrong");
+      expect((e as Error).cause).toBeUndefined();
     }
 
     const users = db.query<{ name: string }>("SELECT name FROM users ORDER BY id");

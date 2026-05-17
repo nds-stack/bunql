@@ -13,8 +13,8 @@ export class FTS5Helper {
     this.#db = db;
   }
 
-  async create(table: string, columns: string[], options?: FTS5Options): Promise<void> {
-    const cols = columns.map((c) => c.includes("(") ? c : `"${c}"`).join(", ");
+  create(table: string, columns: string[], options?: FTS5Options): void {
+    const cols = columns.map((c) => this.#quoteCol(c)).join(", ");
     let extra = "";
     if (options?.tokenize) extra += `, tokenize='${options.tokenize.replace(/'/g, "''")}'`;
     if (options?.content) extra += `, content='${options.content.replace(/'/g, "''")}'`;
@@ -24,25 +24,25 @@ export class FTS5Helper {
     this.#db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS "${table}" USING fts5(${cols}${extra})`);
   }
 
-  async drop(table: string): Promise<void> {
+  drop(table: string): void {
     this.#db.exec(`DROP TABLE IF EXISTS "${table}"`);
   }
 
-  async insert(table: string, data: Record<string, unknown>): Promise<void> {
+  insert(table: string, data: Record<string, unknown>): void {
     const keys = Object.keys(data);
-    const cols = keys.map((k) => `"${k}"`).join(", ");
+    const cols = keys.map((k) => this.#quoteCol(k)).join(", ");
     const placeholders = keys.map(() => "?").join(", ");
     const values = keys.map((k) => data[k] as SQLQueryBindings);
     this.#db.prepare(`INSERT INTO "${table}"(${cols}) VALUES(${placeholders})`).run(...values);
   }
 
-  async delete(table: string, id: number | string): Promise<void> {
+  delete(table: string, id: number | string): void {
     this.#db.prepare(`DELETE FROM "${table}" WHERE rowid = ?`).run(id);
   }
 
-  async update(table: string, id: number | string, data: Record<string, unknown>): Promise<void> {
+  update(table: string, id: number | string, data: Record<string, unknown>): void {
     const keys = Object.keys(data);
-    const cols = keys.map((k) => `"${k}"`).join(", ");
+    const cols = keys.map((k) => this.#quoteCol(k)).join(", ");
     const placeholders = keys.map(() => "?").join(", ");
     const values = keys.map((k) => data[k] as SQLQueryBindings);
     this.#db.prepare(`INSERT OR REPLACE INTO "${table}"(rowid, ${cols}) VALUES(?, ${placeholders})`).run(id, ...values);
@@ -61,7 +61,7 @@ export class FTS5Helper {
     },
   ): T[] {
     const colSel = options?.columns
-      ? options.columns.map((c) => `"${c}"`).join(", ")
+      ? options.columns.map((c) => this.#quoteCol(c)).join(", ")
       : "*";
     let extras = "";
     if (options?.snippet) {
@@ -81,23 +81,26 @@ export class FTS5Helper {
     return this.#db.prepare(sql).all(query, limit, offset) as T[];
   }
 
-  async rebuild(table: string): Promise<void> {
+  rebuild(table: string): void {
     this.#db.exec(`INSERT INTO "${table}"("${table}") VALUES('rebuild')`);
   }
 
-  async merge(table: string, blocks = 16): Promise<void> {
+  merge(table: string, blocks = 16): void {
     this.#db.exec(`INSERT INTO "${table}"("${table}") VALUES('merge=${blocks}')`);
   }
 
-  async optimize(table: string): Promise<void> {
+  optimize(table: string): void {
     this.#db.exec(`INSERT INTO "${table}"("${table}") VALUES('optimize')`);
   }
 
-  async integrityCheck(table: string): Promise<boolean> {
+  integrityCheck(table: string): boolean {
     try {
       this.#db.exec(`INSERT INTO "${table}"("${table}") VALUES('integrity-check')`);
       return true;
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("no such table")) {
+        throw error;
+      }
       return false;
     }
   }
@@ -107,5 +110,9 @@ export class FTS5Helper {
       .prepare(`SELECT rank FROM "${table}" WHERE "${table}" MATCH ? AND rowid = ?`)
       .get(query, id) as { rank: number } | undefined;
     return row?.rank ?? 0;
+  }
+
+  #quoteCol(col: string): string {
+    return `"${col.replace(/"/g, '""')}"`;
   }
 }
