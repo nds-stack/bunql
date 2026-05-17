@@ -564,20 +564,20 @@ Results may vary ±30% between runs due to system load and disk caching.
 
 | Operation | Raw `bun:sqlite` | `@nds-stack/bunql` | Overhead |
 |-----------|-----------------|--------------------|----------|
-| Point read | 336K ops/s | 252K ops/s | -25% |
-| Single write | 22K ops/s | 23K ops/s | +4.5% |
-| 10 concurrent writes | 28K ops/s * | 56K ops/s * | +100% |
-| 50 concurrent writes | 26K ops/s * | 34K ops/s * | +30% |
+| Point read | 216K ops/s | 229K ops/s | +5.8% |
+| Single write | 29.5K ops/s | 23.1K ops/s | -21% |
+| 10 concurrent writes | 64.5K ops/s * | 58.1K ops/s | -10% |
+| 50 concurrent writes | 29.8K ops/s * | 36.7K ops/s | +23% |
 
-> \* BunQL serializes writes through the queue. Under contention, throughput can exceed raw `bun:sqlite` because the queue eliminates retry overhead entirely.
+> \* Raw concurrent benchmark includes manual retry logic with exponential backoff (same strategy as BunQL). Without retry, raw `bun:sqlite` would throw `SQLITE_BUSY`. BunQL eliminates the need for manual retry entirely — writes are serialized, reads are parallel.
 
 ### Realistic Workloads
 
 | Workload | Description | Throughput |
 |----------|-------------|-----------|
-| Mixed | 167r + 167w + 166tx | 28.5K ops/s |
-| Batch | 500 writes in 2.4ms | 207K ops/s |
-| Cache pressure | 200 unique queries (triggers evictions) | 36.4K ops/s |
+| Mixed | 167r + 167w + 166tx | 32.6K ops/s |
+| Batch | 500 writes in 2.3ms | 217K ops/s |
+| Cache pressure | 200 unique queries (triggers evictions) | 32.9K ops/s |
 
 ---
 

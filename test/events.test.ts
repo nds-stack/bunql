@@ -18,29 +18,49 @@ describe("Events", () => {
     }
   });
 
-  test("onBusy is called when retry occurs", async () => {
+  test("onBusy is called when SQLITE_BUSY occurs", async () => {
     const busyCalls: { attempt: number; delay: number }[] = [];
+    const retryCalls: { attempt: number; delay: number }[] = [];
 
     const db = new BunQL(dbPath, {
+      busyTimeout: 1,
       retry: { maxRetries: 2, baseDelay: 1, maxDelay: 5, jitter: false },
       events: {
         onBusy: (attempt, delay) => {
           busyCalls.push({ attempt, delay });
         },
+        onRetry: (attempt, delay) => {
+          retryCalls.push({ attempt, delay });
+        },
       },
     });
 
-    // Simulate a busy situation by opening a write transaction on raw db
-    const rawDb = new (await import("bun:sqlite")).Database(dbPath);
-    rawDb.run("CREATE TABLE test (id INTEGER PRIMARY KEY)");
+    // Prepare table via bunql
+    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
 
-    // This should trigger a busy error
-    await db.run("CREATE TABLE test2 (id INTEGER PRIMARY KEY)");
+    // Open separate connection and hold a RESERVED lock
+    const { Database } = await import("bun:sqlite");
+    const rawDb = new Database(dbPath);
+    rawDb.run("BEGIN IMMEDIATE");
+    rawDb.run("INSERT INTO test VALUES (1, 'locked')");
+    // Lock remains held — no COMMIT/ROLLBACK yet
 
-    expect(busyCalls.length).toBeGreaterThanOrEqual(0);
+    // This write will hit SQLITE_BUSY because rawDb holds RESERVED lock
+    // RetryPolicy should retry (and fail) because rawDb still holds the lock
+    try {
+      await db.run("INSERT INTO test VALUES (2, 'should-retry')");
+    } catch {
+      // BusyError expected after retry exhaustion
+    }
 
-    db.close();
+    // Release lock
+    rawDb.run("ROLLBACK");
+
+    expect(busyCalls.length).toBeGreaterThan(0);
+    expect(retryCalls.length).toBeGreaterThan(0);
+
     rawDb.close();
+    db.close();
   });
 
   test("onDrain is called when queue empties", async () => {

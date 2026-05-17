@@ -1,10 +1,18 @@
 import { describe, test, expect } from "bun:test";
 import { BunQL } from "../src/bunql.ts";
 import { getTestDBPath } from "./helpers/setup.ts";
-import { unlinkSync } from "fs";
+import { rmSync } from "fs";
 
 function makeDBPath(label: string): string {
   return getTestDBPath(`stress-${label}`);
+}
+
+function cleanup(path: string): void {
+  try {
+    rmSync(path, { force: true });
+  } catch {
+    // best-effort cleanup — Windows may hold WAL/SHM locks briefly
+  }
 }
 
 describe("Stress: long-running stability", () => {
@@ -22,7 +30,7 @@ describe("Stress: long-running stability", () => {
     expect(count.rows[0]?.cnt).toBe(5000);
 
     await db.close();
-    unlinkSync(path);
+    cleanup(path);
   }, 30000);
 
   test("50 concurrent writes in 5 batches", async () => {
@@ -41,7 +49,7 @@ describe("Stress: long-running stability", () => {
     expect(count.rows[0]?.cnt).toBe(250);
 
     await db.close();
-    unlinkSync(path);
+    cleanup(path);
   }, 15000);
 
   test("20 concurrent transactions increment counter", async () => {
@@ -64,7 +72,7 @@ describe("Stress: long-running stability", () => {
     expect(result.rows[0]?.val).toBe(20);
 
     await db.close();
-    unlinkSync(path);
+    cleanup(path);
   }, 15000);
 
   test("10 repeated open/close cycles", async () => {
@@ -85,7 +93,7 @@ describe("Stress: long-running stability", () => {
       await db2.close();
     }
 
-    unlinkSync(path);
+    cleanup(path);
   }, 15000);
 
   test("statement cache pressure with 150 unique queries", async () => {
@@ -108,7 +116,7 @@ describe("Stress: long-running stability", () => {
     }
 
     await db.close();
-    unlinkSync(path);
+    cleanup(path);
   }, 15000);
 
   test("mixed workload: 100 interleaved reads/writes/transactions", async () => {
@@ -143,7 +151,7 @@ describe("Stress: long-running stability", () => {
 
     await Promise.all(ops);
     await db.close();
-    unlinkSync(path);
+    cleanup(path);
   }, 20000);
 
   test("stress: batch operations with large arrays", async () => {
@@ -165,7 +173,7 @@ describe("Stress: long-running stability", () => {
     expect(count.rows[0]?.cnt).toBe(batchSize * 10);
 
     await db.close();
-    unlinkSync(path);
+    cleanup(path);
   }, 15000);
 });
 
@@ -179,7 +187,7 @@ describe("Stress: graceful shutdown", () => {
     await db.close();
 
     expect(db.closed).toBe(true);
-    unlinkSync(path);
+    cleanup(path);
   });
 
   test("close during active writes does not hang", async () => {
@@ -195,7 +203,7 @@ describe("Stress: graceful shutdown", () => {
     // Close immediately
     await db.close();
     expect(db.closed).toBe(true);
-    unlinkSync(path);
+    cleanup(path);
   }, 10000);
 
   test("close during active transaction is safe", async () => {
@@ -216,7 +224,7 @@ describe("Stress: graceful shutdown", () => {
     expect(db.closed).toBe(true);
 
     await txPromise;
-    unlinkSync(path);
+    cleanup(path);
   }, 10000);
 
   test("close during retry is safe", async () => {
@@ -234,7 +242,7 @@ describe("Stress: graceful shutdown", () => {
     expect(db.closed).toBe(true);
 
     await writePromise;
-    unlinkSync(path);
+    cleanup(path);
   }, 10000);
 
   test("close after big error is safe", async () => {
@@ -252,7 +260,7 @@ describe("Stress: graceful shutdown", () => {
     // Close should still work
     await db.close();
     expect(db.closed).toBe(true);
-    unlinkSync(path);
+    cleanup(path);
   });
 
   test("operations after close are rejected", async () => {
@@ -267,7 +275,7 @@ describe("Stress: graceful shutdown", () => {
     expect(() => db.prepare("SELECT 1")).toThrow("Database is closed");
     await expect(db.batch([])).rejects.toThrow("Database is closed");
 
-    unlinkSync(path);
+    cleanup(path);
   });
 
   test("close with empty queue is immediate", async () => {
@@ -279,6 +287,6 @@ describe("Stress: graceful shutdown", () => {
     const duration = performance.now() - start;
 
     expect(duration).toBeLessThan(50);
-    unlinkSync(path);
+    cleanup(path);
   });
 });

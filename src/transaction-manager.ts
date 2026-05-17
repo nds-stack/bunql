@@ -14,6 +14,11 @@ export interface TransactionContext {
   batch(operations: BatchOperation[]): Promise<RunResult[]>;
 }
 
+export interface TxMetrics {
+  committed: number;
+  rolledBack: number;
+}
+
 export class TransactionManager {
   #db: Database;
   #writeQueue: WriteQueue;
@@ -21,6 +26,12 @@ export class TransactionManager {
   #depth = 0;
   #hooks?: BunQLHooks;
   #logger?: Logger;
+  #committed = 0;
+  #rolledBack = 0;
+
+  get metrics(): TxMetrics {
+    return { committed: this.#committed, rolledBack: this.#rolledBack };
+  }
 
   constructor(
     db: Database,
@@ -59,6 +70,7 @@ export class TransactionManager {
         } catch (error) {
           const originalError = error instanceof Error ? error : new Error(String(error));
           this.#db.run("ROLLBACK");
+          this.#rolledBack++;
           const duration = performance.now() - startTime;
           this.#hooks?.afterTransaction?.(duration, false);
           this.#log("warn", "Transaction rolled back");
@@ -66,6 +78,7 @@ export class TransactionManager {
         }
 
         this.#db.run("COMMIT");
+        this.#committed++;
         const duration = performance.now() - startTime;
         this.#hooks?.afterTransaction?.(duration, true);
         this.#log("debug", `Transaction committed in ${duration.toFixed(2)}ms`);

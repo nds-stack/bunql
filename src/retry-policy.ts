@@ -5,12 +5,12 @@
 import type { RetryConfig } from "./types/options.ts";
 import { BusyError } from "./errors/busy-error.ts";
 
-export const DEFAULT_RETRY_CONFIG = {
+export const DEFAULT_RETRY_CONFIG = Object.freeze({
   maxRetries: 5,
   baseDelay: 50,
   maxDelay: 1000,
   jitter: true,
-} satisfies Required<RetryConfig>;
+} satisfies Required<RetryConfig>);
 
 export class RetryPolicy {
   readonly maxRetries: number;

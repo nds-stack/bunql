@@ -1,4 +1,3 @@
-agents/
 # Markdown docs (keep only README)
 *.md
 !README.md

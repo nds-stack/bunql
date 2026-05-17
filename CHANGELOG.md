@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.1] - 2026-05-18
+
+### Fixed
+- Maintenance timer async rejection now caught (prevents unhandled promise rejection)
+- LRU eviction in statement cache: O(n) scan replaced with O(1) Map insertion-order eviction
+
+### Changed
+- Clean script: removed redundant `--bun` flag
+
 ## [0.1.0] - 2026-05-17
 
 ### Changed (Breaking)

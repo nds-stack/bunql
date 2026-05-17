@@ -37,7 +37,8 @@ export class StatementCache {
     const entry = this.#cache.get(sql);
     if (entry) {
       this.#hits++;
-      entry.lastUsed = performance.now();
+      this.#cache.delete(sql);
+      this.#cache.set(sql, entry);
       return entry.stmt;
     }
 
@@ -69,20 +70,11 @@ export class StatementCache {
   }
 
   #evict(): void {
-    let oldestKey: string | null = null;
-    let oldestTime = Infinity;
-
-    for (const [key, entry] of this.#cache) {
-      if (entry.lastUsed < oldestTime) {
-        oldestTime = entry.lastUsed;
-        oldestKey = key;
-      }
-    }
-
-    if (oldestKey) {
-      const entry = this.#cache.get(oldestKey);
+    const firstKey = this.#cache.keys().next().value;
+    if (firstKey !== undefined) {
+      const entry = this.#cache.get(firstKey);
       entry?.stmt.finalize();
-      this.#cache.delete(oldestKey);
+      this.#cache.delete(firstKey);
     }
   }
 }

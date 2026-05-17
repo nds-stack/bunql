@@ -48,6 +48,24 @@ export class FTS5Helper {
     this.#db.prepare(`INSERT OR REPLACE INTO "${table}"(rowid, ${cols}) VALUES(?, ${placeholders})`).run(id, ...values);
   }
 
+  #escapeStr(val: string): string {
+    return val.replace(/'/g, "''");
+  }
+
+  #sanitizeOrderBy(order: string, table: string): string {
+    const allowed = new Set(["rank", "rank DESC", "rowid", "rowid DESC"]);
+    if (allowed.has(order)) return order;
+    const prefix = `"${table}".`;
+    if (order.startsWith(prefix)) {
+      const col = order.slice(prefix.length);
+      const dir = col.endsWith(" DESC") ? " DESC" : "";
+      const base = dir ? col.slice(0, -5) : col;
+      if (base && /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(base)) return `"${table}"."${base}"${dir}`;
+    }
+    if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(order)) return `"${order}"`;
+    return "rank";
+  }
+
   search<T = FTSResult>(
     table: string,
     query: string,
@@ -68,12 +86,12 @@ export class FTS5Helper {
       const start = typeof options.snippet === "object" ? options.snippet.startTag ?? "<b>" : "<b>";
       const end = typeof options.snippet === "object" ? options.snippet.endTag ?? "</b>" : "</b>";
       const max = typeof options.snippet === "object" ? options.snippet.maxTokens ?? 64 : 64;
-      extras = `, snippet("${table}", 0, '${start}', '${end}', '...', ${max}) AS snippet`;
+      extras = `, snippet("${table}", 0, '${this.#escapeStr(start)}', '${this.#escapeStr(end)}', '...', ${max}) AS snippet`;
     }
     if (options?.highlight) {
       extras += `, highlight("${table}", 0, '<b>', '</b>') AS highlight`;
     }
-    const order = options?.orderBy ?? "rank";
+    const order = this.#sanitizeOrderBy(options?.orderBy ?? "rank", table);
     const limit = options?.limit ?? 20;
     const offset = options?.offset ?? 0;
 

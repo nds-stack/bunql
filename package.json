@@ -1,6 +1,6 @@
 {
   "name": "@nds-stack/bunql",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Lightweight SQLite wrapper for Bun — queued writes, serialized transactions, SQLITE_BUSY handling",
   "author": "nds-stack <nds.stack@gmail.com>",
   "type": "module",
@@ -26,7 +26,7 @@
     "bench": "bun run bench/runner.ts",
     "prepublishOnly": "bun run lint && bun run typecheck && bun test && bun run build",
     "build": "bun build ./src/index.ts --outdir=./dist --target=bun --format=esm --external bun:sqlite && bun build ./src/server/index.ts --outdir=./dist/server --target=bun --format=esm --external bun:sqlite && tsc -p tsconfig.build.json",
-    "clean": "bun run --bun \"rm -rf dist\""
+    "clean": "rm -rf dist"
   },
   "files": [
     "dist/",

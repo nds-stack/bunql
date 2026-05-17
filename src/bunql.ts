@@ -3,7 +3,6 @@
  * @description BunQL facade — main entry point, thin wrapper over bun:sqlite.
  */
 import { Database, type Statement as BunStatement, type SQLQueryBindings } from "bun:sqlite";
-import { statSync } from "fs";
 import { WriteQueue } from "./write-queue.ts";
 import { RetryPolicy, DEFAULT_RETRY_CONFIG } from "./retry-policy.ts";
 import { TransactionManager, type TransactionContext } from "./transaction-manager.ts";
@@ -74,6 +73,7 @@ export class BunQL {
     queue: { currentSize: 0, peakSize: 0, totalEnqueued: 0 },
     transactions: { committed: 0, rolledBack: 0 },
   };
+  #pageSize = 4096;
 
   constructor(path: string, options?: BunQLOptions) {
     const config = this.#resolveConfig(options);
@@ -111,6 +111,10 @@ export class BunQL {
     if (config.autoVacuum !== "NONE") {
       this.#db.run(`PRAGMA auto_vacuum=${config.autoVacuum}`);
     }
+
+    this.#pageSize = (this.#db
+      .prepare("PRAGMA page_size")
+      .get() as Record<string, number>)?.["page_size"] ?? 4096;
 
     this.#writeQueue = new WriteQueue();
     this.#retryPolicy = new RetryPolicy(config.retry);
@@ -160,14 +164,16 @@ export class BunQL {
   }
 
   get metrics(): BunQLMetrics {
+    const tx = this.#transactionManager.metrics;
     return {
-      ...this.#metrics,
+      writes: { ...this.#metrics.writes },
+      reads: { ...this.#metrics.reads },
       queue: {
-        ...this.#metrics.queue,
         currentSize: this.#writeQueue.size,
         peakSize: this.#writeQueue.peakSize,
         totalEnqueued: this.#writeQueue.totalEnqueued,
       },
+      transactions: { committed: tx.committed, rolledBack: tx.rolledBack },
     };
   }
 
@@ -257,14 +263,8 @@ export class BunQL {
     callback: (tx: TransactionContext) => Promise<T>,
   ): Promise<T> {
     this.#ensureOpen();
-    try {
-      const result = await this.#transactionManager.transaction(callback);
-      this.#metrics.transactions.committed++;
-      return result;
-    } catch (error) {
-      this.#metrics.transactions.rolledBack++;
-      throw error;
-    }
+    const result = await this.#transactionManager.transaction(callback);
+    return result;
   }
 
   prepare<T = unknown, P extends SQLQueryBindings[] = SQLQueryBindings[]>(
@@ -283,13 +283,15 @@ export class BunQL {
       },
       run: async (...params: P): Promise<RunResult> => {
         return this.#writeQueue.enqueue(async () => {
-          const start = performance.now();
-          const result = stmt.run(...params);
-          return {
-            changes: result.changes,
-            lastInsertRowid: result.lastInsertRowid,
-            durationMs: performance.now() - start,
-          };
+          return this.#retryPolicy.execute(async () => {
+            const start = performance.now();
+            const result = stmt.run(...params);
+            return {
+              changes: result.changes,
+              lastInsertRowid: result.lastInsertRowid,
+              durationMs: performance.now() - start,
+            };
+          });
         });
       },
       finalize: () => {
@@ -361,7 +363,8 @@ export class BunQL {
       this.#db.exec(`VACUUM INTO '${path.replace(/'/g, "''")}'`);
     });
 
-    const { size } = statSync(path);
+    const file = Bun.file(path);
+    const size = file.size ?? 0;
     return { size, durationMs: performance.now() - start };
   }
 
@@ -427,22 +430,20 @@ export class BunQL {
   }
 
   #validateBackupPath(path: string): void {
-    if (!/^[\w./_-]+$/.test(path)) {
-      throw new Error(
-        `Invalid backup path: ${path}. Only alphanumeric, /, _, -, . allowed.`,
-      );
-    }
     if (path.includes("..")) {
       throw new Error(
         `Invalid backup path: ${path}. Path traversal (..) is not allowed.`,
       );
     }
+    if (path.includes("\0")) {
+      throw new Error(
+        `Invalid backup path: ${path}. Null byte not allowed.`,
+      );
+    }
   }
 
   #getPageSize(): number {
-    return (this.#db
-      .prepare("PRAGMA page_size")
-      .get() as Record<string, number>)?.["page_size"] ?? 4096;
+    return this.#pageSize;
   }
 
   #checkpointDirect(mode: CheckpointMode = "PASSIVE"): CheckpointResult {
@@ -553,28 +554,28 @@ export class BunQL {
     this.#maintenanceTimer = setInterval(() => {
       if (this.#closed) return;
       this.#writeQueue.enqueue(async () => {
-        try {
-          if (maintenance.checkpoint?.enabled) {
-            const status = this.#walStatusDirect();
-            if (status.walSizePages > (maintenance.checkpoint.pagesThreshold ?? 1000)) {
-              this.#checkpointDirect(maintenance.checkpoint.mode ?? "TRUNCATE");
-            }
+        if (maintenance.checkpoint?.enabled) {
+          const status = this.#walStatusDirect();
+          if (status.walSizePages > (maintenance.checkpoint.pagesThreshold ?? 1000)) {
+            this.#checkpointDirect(maintenance.checkpoint.mode ?? "TRUNCATE");
           }
-          if (maintenance.vacuum?.enabled) {
-            const pages = maintenance.vacuum.pagesPerStep ?? 100;
-            if (maintenance.vacuum.mode !== "full") {
-              this.#db.exec(`PRAGMA incremental_vacuum(${pages})`);
-            }
-          }
-          if (maintenance.backup?.enabled) {
-            const ts = new Date().toISOString().replace(/[:.]/g, "-");
-            const path = `${maintenance.backup.path.replace(/\/$/, "")}/bunql-backup-${ts}.db`;
-            this.#db.exec(`VACUUM INTO '${path.replace(/'/g, "''")}'`);
-          }
-        } catch (error) {
-          this.#log("error", `Maintenance task failed: ${error}`);
         }
-      }).catch((err) => this.#log("error", `Maintenance enqueue failed: ${err}`));
+        if (maintenance.vacuum?.enabled) {
+          const pages = maintenance.vacuum.pagesPerStep ?? 100;
+          if (maintenance.vacuum.mode === "full") {
+            this.#db.exec("VACUUM");
+          } else {
+            this.#db.exec(`PRAGMA incremental_vacuum(${pages})`);
+          }
+        }
+        if (maintenance.backup?.enabled) {
+          const ts = new Date().toISOString().replace(/[:.]/g, "-");
+          const path = `${maintenance.backup.path.replace(/\/$/, "")}/bunql-backup-${ts}.db`;
+          this.#db.exec(`VACUUM INTO '${path.replace(/'/g, "''")}'`);
+        }
+      }).catch((error) => {
+        this.#log("error", `Maintenance task failed: ${error}`);
+      });
     }, intervalMs);
   }
 

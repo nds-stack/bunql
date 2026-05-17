@@ -10,8 +10,6 @@ dist
 coverage
 *.lcov
 
-# AI agent files
-agents/
 
 # logs
 logs
