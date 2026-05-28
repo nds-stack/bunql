@@ -81,14 +81,14 @@ describe("SQLite integration", () => {
     expect(res.rows[0]?.count).toBe(1);
   });
 
-  test("tagged template sql() with .all()/.get()/.run()", () => {
+  test("tagged template sql() with .all()/.get()/.run()", async () => {
     db.run("INSERT INTO users (name, email) VALUES ('Alice', 'a@test.com')");
     db.run("INSERT INTO users (name, email) VALUES ('Bob', 'b@test.com')");
 
-    const all = db.sql`SELECT * FROM users`.all();
+    const all = await db.sql`SELECT * FROM users`.all();
     expect(all).toHaveLength(2);
 
-    const single = db.sql`SELECT * FROM users WHERE id = ${1}`.get();
+    const single = await db.sql`SELECT * FROM users WHERE id = ${1}`.get();
     expect(single?.name).toBe("Alice");
 
     const ins = db.sql`INSERT INTO users (name, email) VALUES (${"Charlie"}, ${"c@test.com"})`.run();

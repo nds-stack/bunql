@@ -66,19 +66,13 @@ export class SqlQuery<T extends Record<string, unknown> = Record<string, unknown
     this.#node = node;
   }
 
-  all(): T[] | Promise<T[]> {
-    const result = this.#executor?.executeSQL(this.sql, this.params);
-    if (result instanceof Promise) {
-      return result.then((r) => r.rows as T[]);
-    }
+  async all(): Promise<T[]> {
+    const result = await this.#executor?.executeSQL(this.sql, this.params);
     return (result?.rows ?? []) as T[];
   }
 
-  get(): T | null | Promise<T | null> {
-    const result = this.#executor?.executeSQL(this.sql, this.params);
-    if (result instanceof Promise) {
-      return result.then((r) => (r.rows.length > 0 ? (r.rows[0] as T) : null));
-    }
+  async get(): Promise<T | null> {
+    const result = await this.#executor?.executeSQL(this.sql, this.params);
     return (result?.rows[0] as T) ?? null;
   }
 
@@ -113,21 +107,15 @@ export class RelationsQuery<T extends Record<string, unknown>, R extends Relatio
     this.#relations = relations;
   }
 
-  all(): RelationsResult<T, R>[] | Promise<RelationsResult<T, R>[]> {
+  async all(): Promise<RelationsResult<T, R>[]> {
     const executor = this.#parent._executor;
-    const result = executor.executeSQL(this.#parent.sql, this.#parent.params);
-    if (result instanceof Promise) {
-      return result.then(async () => fetchMany(executor as never, this.#parent.sql, this.#parent.params, this.#relations) as unknown as RelationsResult<T, R>[]);
-    }
+    const result = await executor.executeSQL(this.#parent.sql, this.#parent.params);
     return fetchMany(executor as never, this.#parent.sql, this.#parent.params, this.#relations) as unknown as RelationsResult<T, R>[];
   }
 
-  get(): RelationsResult<T, R> | null | Promise<RelationsResult<T, R> | null> {
+  async get(): Promise<RelationsResult<T, R> | null> {
     const executor = this.#parent._executor;
-    const result = executor.executeSQL(this.#parent.sql, this.#parent.params);
-    if (result instanceof Promise) {
-      return result.then(async () => fetchOne(executor as never, this.#parent.sql, this.#parent.params, this.#relations) as unknown as RelationsResult<T, R> | null);
-    }
+    const result = await executor.executeSQL(this.#parent.sql, this.#parent.params);
     return fetchOne(executor as never, this.#parent.sql, this.#parent.params, this.#relations) as unknown as RelationsResult<T, R> | null;
   }
 }

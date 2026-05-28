@@ -88,12 +88,9 @@ export class MqlQuery {
     return this;
   }
 
-  toArray<T = Record<string, unknown>>(): T[] | Promise<T[]> {
+  async toArray<T = Record<string, unknown>>(): Promise<T[]> {
     if (!this.#executor) return [];
-    const result = this.#executor.executeMQL(this.collection, this.#method, this.#args);
-    if (result instanceof Promise) {
-      return result.then((r) => r.rows as T[]);
-    }
+    const result = await this.#executor.executeMQL(this.collection, this.#method, this.#args);
     return result.rows as T[];
   }
 

@@ -387,7 +387,9 @@ export class BunQL {
   ): Promise<T> {
     this.#ensureOpen();
     const txMode = mode ?? this.#config.transactionMode;
-    const result = await this.#transactionManager.transaction(callback, txMode);
+    const result = await this.#retryPolicy.execute(async () =>
+      this.#transactionManager.transaction(callback, txMode)
+    );
     return result;
   }
 
@@ -402,47 +404,53 @@ export class BunQL {
     this.#ensureOpen();
 
     this.#metrics.writes.total++;
-    return this.#writeQueue.enqueue(async () => {
-      try {
-        this.#db.run("BEGIN IMMEDIATE");
-        const results = executeBatchOperations(operations, (sql) => this.#statementCache.get(sql), this.#config.hooks);
-        this.#db.run("COMMIT");
-        return results;
-      } catch (error) {
-        this.#metrics.writes.failed++;
-        this.#db.run("ROLLBACK");
-        const err = error instanceof Error ? error : new Error(String(error));
-        this.#onError?.(err);
-        throw new QueueError(
-          "Batch operation failed, transaction rolled back",
-          { cause: err },
-        );
-      }
-    });
+    return this.#retryPolicy.execute(async () =>
+      this.#writeQueue.enqueue(async () => {
+        try {
+          this.#db.run("BEGIN IMMEDIATE");
+          const results = executeBatchOperations(operations, (sql) => this.#statementCache.get(sql), this.#config.hooks);
+          this.#db.run("COMMIT");
+          return results;
+        } catch (error) {
+          this.#metrics.writes.failed++;
+          this.#db.run("ROLLBACK");
+          const err = error instanceof Error ? error : new Error(String(error));
+          this.#onError?.(err);
+          throw new QueueError(
+            "Batch operation failed, transaction rolled back",
+            { cause: err },
+          );
+        }
+      })
+    );
   }
 
   async exec(sql: string): Promise<void> {
     this.#ensureOpen();
 
     this.#metrics.writes.total++;
-    await this.#writeQueue.enqueue(async () => {
-      try {
-        this.#db.exec(sql);
-      } catch (error) {
-        this.#metrics.writes.failed++;
-        this.#onError?.(error instanceof Error ? error : new Error(String(error)));
-        throw new QueueError("Exec operation failed", {
-          cause: error instanceof Error ? error : undefined,
-        });
-      }
-    });
+    await this.#retryPolicy.execute(async () =>
+      this.#writeQueue.enqueue(async () => {
+        try {
+          this.#db.exec(sql);
+        } catch (error) {
+          this.#metrics.writes.failed++;
+          this.#onError?.(error instanceof Error ? error : new Error(String(error)));
+          throw new QueueError("Exec operation failed", {
+            cause: error instanceof Error ? error : undefined,
+          });
+        }
+      })
+    );
   }
 
   async checkpoint(mode: CheckpointMode = "PASSIVE"): Promise<CheckpointResult> {
     this.#ensureOpen();
-    return this.#writeQueue.enqueue(async () => {
-      return this.#checkpointDirect(mode);
-    });
+    return this.#retryPolicy.execute(async () =>
+      this.#writeQueue.enqueue(async () => {
+        return this.#checkpointDirect(mode);
+      })
+    );
   }
 
   async walStatus(): Promise<WalStatus> {
@@ -457,9 +465,11 @@ export class BunQL {
     this.#validateBackupPath(path);
     const start = performance.now();
 
-    await this.#writeQueue.enqueue(async () => {
-      this.#db.exec(`VACUUM INTO '${path.replace(/'/g, "''")}'`);
-    });
+    await this.#retryPolicy.execute(async () =>
+      this.#writeQueue.enqueue(async () => {
+        this.#db.exec(`VACUUM INTO '${path.replace(/'/g, "''")}'`);
+      })
+    );
 
     const file = Bun.file(path);
     const size = file.size ?? 0;
@@ -474,14 +484,16 @@ export class BunQL {
       .prepare("PRAGMA freelist_count")
       .get() as Record<string, number>)?.["freelist_count"] ?? 0;
 
-    await this.#writeQueue.enqueue(async () => {
-      if (options?.incremental) {
-        const pages = options.pagesPerStep ?? 100;
-        this.#db.exec(`PRAGMA incremental_vacuum(${pages})`);
-      } else {
-        this.#db.exec("VACUUM");
-      }
-    });
+    await this.#retryPolicy.execute(async () =>
+      this.#writeQueue.enqueue(async () => {
+        if (options?.incremental) {
+          const pages = options.pagesPerStep ?? 100;
+          this.#db.exec(`PRAGMA incremental_vacuum(${pages})`);
+        } else {
+          this.#db.exec("VACUUM");
+        }
+      })
+    );
 
     const endCount = (this.#db
       .prepare("PRAGMA freelist_count")

@@ -47,17 +47,17 @@ describe("sql tagged template", () => {
 });
 
 describe("SqlQuery", () => {
-  test("all() without executor returns []", () => {
+  test("all() without executor returns []", async () => {
     const q = new SqlQuery("SELECT 1", []);
-    expect(q.all()).toEqual([]);
+    expect(await q.all()).toEqual([]);
   });
 
-  test("get() without executor returns null", () => {
+  test("get() without executor returns null", async () => {
     const q = new SqlQuery("SELECT 1", []);
-    expect(q.get()).toBeNull();
+    expect(await q.get()).toBeNull();
   });
 
-  test("all() with mock executor", () => {
+  test("all() with mock executor", async () => {
     const q = new SqlQuery<{ id: number; name: string }>("SELECT * FROM users WHERE id = ?", [1], {
       executeSQL: () => ({
         columns: ["id", "name"],
@@ -66,13 +66,13 @@ describe("SqlQuery", () => {
       executeRun: () => ({ changes: 0, lastInsertRowid: 0 }),
       isAsync: false,
     });
-    const result = q.all() as { id: number; name: string }[];
+    const result = await q.all() as { id: number; name: string }[];
     expect(result).toHaveLength(1);
     expect(result[0]!.id).toBe(1);
     expect(result[0]!.name).toBe("Alice");
   });
 
-  test("get() with mock executor", () => {
+  test("get() with mock executor", async () => {
     const q = new SqlQuery<{ id: number; name: string }>("SELECT * FROM users WHERE id = ?", [1], {
       executeSQL: () => ({
         columns: ["id", "name"],
@@ -81,7 +81,7 @@ describe("SqlQuery", () => {
       executeRun: () => ({ changes: 0, lastInsertRowid: 0 }),
       isAsync: false,
     });
-    const result = q.get() as { id: number; name: string } | null;
+    const result = await q.get() as { id: number; name: string } | null;
     expect(result).not.toBeNull();
     expect(result!.id).toBe(1);
   });
@@ -138,9 +138,9 @@ describe("MqlQuery", () => {
     expect(cmd.method).toBe("deleteOne");
   });
 
-  test("toArray without executor returns []", () => {
+  test("toArray without executor returns []", async () => {
     const q = new MqlQuery("users");
-    expect(q.find({}).toArray()).toEqual([]);
+    expect(await q.find({}).toArray()).toEqual([]);
   });
 });
 
@@ -212,7 +212,7 @@ describe("BunQL sql() / mql()", () => {
     expect(q.sql).toBe("SELECT * FROM test WHERE name = ?");
     expect(q.params).toEqual(["Alice"]);
 
-    const rows = q.all() as { id: number; name: string }[];
+    const rows = await q.all() as { id: number; name: string }[];
     expect(rows).toHaveLength(1);
     expect(rows[0]!.name).toBe("Alice");
 
