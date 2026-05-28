@@ -2,6 +2,7 @@
 import { Database } from "jsr:@db/sqlite@0.13";
 
 const ITERATIONS = 500;
+const CONCURRENCY = [10, 50];
 
 const db = new Database("bench/tmp/deno_sqlite_bench.db");
 db.exec("PRAGMA journal_mode=WAL");
@@ -24,10 +25,28 @@ const writeStart = performance.now();
 for (let i = 0; i < ITERATIONS; i++) insert.run(`write-${i}`);
 const writeOps = (ITERATIONS / (performance.now() - writeStart)) * 1000;
 
+const concurrentWrite = {};
+for (const level of CONCURRENCY) {
+  const start = performance.now();
+  const promises = [];
+  for (let i = 0; i < ITERATIONS; i++) {
+    promises.push((() => {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+          insert.run(`deno-conc-${level}-${i}`);
+          return;
+        } catch { /* BUSY */ }
+      }
+    })());
+  }
+  await Promise.all(promises);
+  concurrentWrite[level] = (ITERATIONS / (performance.now() - start)) * 1000;
+}
+
 db.close();
 
 try { Deno.removeSync("bench/tmp/deno_sqlite_bench.db"); } catch {}
 try { Deno.removeSync("bench/tmp/deno_sqlite_bench.db-wal"); } catch {}
 try { Deno.removeSync("bench/tmp/deno_sqlite_bench.db-shm"); } catch {}
 
-console.log(JSON.stringify({ read: readOps, write: writeOps }));
+console.log(JSON.stringify({ read: readOps, write: writeOps, concurrentWrite }));

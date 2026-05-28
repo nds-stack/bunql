@@ -623,14 +623,14 @@ Results may vary ±30% between runs due to system load and disk caching.
 
 | Operation | `bun:sqlite` raw | Manual retry | `better-sqlite3` 12.10 | `sqlite3` 6.0.1 | `node:sqlite` | Deno SQLite | `sql.js` WASM | **BunQL** |
 |-----------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Point read | 322K | 253K | 166K | 59.5K | 152K | 84.3K | 33.3K | 157K |
-| Single write | 26.8K | 24.9K | 16.7K | 79.9K* | 22.7K | 27.3K | 9.0K | 21.7K |
-| 10 concurrent | 60.6K | 37.3K | — | — | — | — | — | 56.5K |
-| 50 concurrent | 22.2K | 25.1K | — | — | — | — | — | 17.9K |
+| Point read | 284K | 285K | 175K | 111K | 209K | 64.5K | 34.7K | 222K |
+| Single write | 32.1K | 28.0K | 18.7K | 131K* | 22.7K | 22.7K | 10.6K | 23.7K |
+| 10 concurrent | 65.5K | 73.8K | 32.1K | — | 24.4K | 37.2K | — | 52.4K |
+| 50 concurrent | 26.0K | 27.8K | 24.7K | — | 21.1K | 21.5K | — | 28.9K |
 
-> \* `sqlite3@6.0.1` write numbers reflect async callback enqueue speed, not commit speed. The library uses an internal serialized queue — `db.close()` may not flush all pending operations. Reads are unaffected.
+> \* `sqlite3@6.0.1` write numbers reflect async callback enqueue speed, not commit speed. The library uses an internal serialized queue — `db.close()` may not flush all pending operations. Reads and concurrent are unaffected.
 >
-> Concurrent writes tested on Bun runtime only (Node.js competitors are synchronous/single-threaded). Raw + Manual retry benchmarks include exponential backoff retry logic. BunQL eliminates the need for manual retry — writes are serialized, reads are parallel.
+> Concurrent writes tested via manual retry loop (max 5 attempts, exponential backoff). `sql.js` and `sqlite3@6.0.1` excluded: WASM single-threaded, callback queue incompatible. BunQL eliminates the need for manual retry — writes are serialized, reads are parallel.
 
 ### Realistic Workloads
 

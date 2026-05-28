@@ -302,9 +302,18 @@ async function main(): Promise<void> {
   console.log(`  Deno SQLite (FFI)   | Read: ${formatOps(deno.read)} | Write: ${formatOps(deno.write)}`);
 
   // --- Concurrent Writes ---
-  console.log("\n--- Concurrent Writes (Bun only) ---");
+  console.log("\n--- Concurrent Writes ---");
   for (const level of CONCURRENCY_LEVELS) {
-    console.log(`  ${level} concurrent | bun:sqlite: ${formatOps(raw.concurrentWrite?.[level] ?? 0)} | Manual: ${formatOps(manual.concurrentWrite?.[level] ?? 0)} | BunQL: ${formatOps(bql.concurrentWrite?.[level] ?? 0)}`);
+    const parts: string[] = [
+      `bun:sqlite: ${formatOps(raw.concurrentWrite?.[level] ?? 0)}`,
+      `Manual: ${formatOps(manual.concurrentWrite?.[level] ?? 0)}`,
+      `BunQL: ${formatOps(bql.concurrentWrite?.[level] ?? 0)}`,
+    ];
+    if (bs3.concurrentWrite?.[level]) parts.push(`better-sql3: ${formatOps(bs3.concurrentWrite[level])}`);
+    if (sql3.concurrentWrite?.[level]) parts.push(`sqlite3: ${formatOps(sql3.concurrentWrite[level])}`);
+    if (nsql.concurrentWrite?.[level]) parts.push(`node:sqlite: ${formatOps(nsql.concurrentWrite[level])}`);
+    if (deno.concurrentWrite?.[level]) parts.push(`Deno: ${formatOps(deno.concurrentWrite[level])}`);
+    console.log(`  ${level} concurrent | ${parts.join(" | ")}`);
   }
 
   // --- Realistic workloads ---

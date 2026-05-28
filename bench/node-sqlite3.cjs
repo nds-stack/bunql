@@ -4,10 +4,11 @@ const { mkdirSync, unlinkSync } = require("fs");
 const ITERATIONS = 500;
 const BENCH_DIR = "bench/tmp";
 
+(async () => {
 try { mkdirSync(BENCH_DIR, { recursive: true }); } catch {}
 
 const dbPath = `${BENCH_DIR}/node_sql3_${Date.now()}.db`;
-const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE);
+const db = new sqlite3.Database(dbPath);
 
 db.serialize();
 db.run("PRAGMA journal_mode=WAL");
@@ -36,4 +37,5 @@ writeStmt.finalize();
 
 db.close();
 try { unlinkSync(dbPath); } catch {}
-console.log(JSON.stringify({ read: readOps, write: writeOps }));
+console.log(JSON.stringify({ read: readOps, write: writeOps, concurrentWrite: {} }));
+})();

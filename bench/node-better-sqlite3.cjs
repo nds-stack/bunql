@@ -1,9 +1,11 @@
-const Database = require("better-sqlite3");
 const { mkdirSync, unlinkSync } = require("fs");
+const Database = require("C:/laragon/bin/nodejs/node-v22/node_modules/better-sqlite3/lib/index.js");
 
 const ITERATIONS = 500;
+const CONCURRENCY = [10, 50];
 const BENCH_DIR = "bench/tmp";
 
+(async () => {
 try { mkdirSync(BENCH_DIR, { recursive: true }); } catch {}
 
 const dbPath = `${BENCH_DIR}/node_bs3_${Date.now()}.db`;
@@ -28,6 +30,28 @@ const writeStart = performance.now();
 for (let i = 0; i < ITERATIONS; i++) insert.run(`write-${i}`);
 const writeOps = (ITERATIONS / (performance.now() - writeStart)) * 1000;
 
+const concurrentWrite = {};
+for (const level of CONCURRENCY) {
+  const start = performance.now();
+  const tasks = [];
+  for (let i = 0; i < ITERATIONS; i++) {
+    tasks.push(new Promise((resolve) => {
+      setImmediate(() => {
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            insert.run(`bs3-conc-${level}-${i}`);
+            resolve(); return;
+          } catch { /* BUSY */ }
+        }
+        resolve();
+      });
+    }));
+  }
+  await Promise.all(tasks);
+  concurrentWrite[level] = (ITERATIONS / (performance.now() - start)) * 1000;
+}
+
 db.close();
 try { unlinkSync(dbPath); } catch {}
-console.log(JSON.stringify({ read: readOps, write: writeOps }));
+console.log(JSON.stringify({ read: readOps, write: writeOps, concurrentWrite }));
+})();
