@@ -6,8 +6,8 @@
 [![Bun](https://img.shields.io/badge/Bun-%3E%3D1.3.0-black?logo=bun)](https://bun.sh)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue?logo=typescript)](https://www.typescriptlang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-294-green)]()
-[![Bundle](https://img.shields.io/badge/bundle-80.9KB%20core%20%2F%20101KB%20driver-blue)]()
+[![Tests](https://img.shields.io/badge/tests-300-green)]()
+[![Bundle](https://img.shields.io/badge/bundle-80.9KB%20core%20%2F%20114KB%20driver-blue)]()
 
 ---
 
@@ -1274,14 +1274,24 @@ Write operations via the `/run` endpoint are synchronous (direct to `bun:sqlite`
 
 ## Stability
 
-- **v0.7.0-dev (in development)** — MySQL driver (custom TCP + wire protocol, mysql_native_password auth)
-- **v0.6.0 (development)** — PostgreSQL driver (custom TCP + wire protocol, MD5 auth)
+- **v0.8.0-dev (in development)** — Unified TransactionManager across all backends + parameterized queries
+- **v0.7.0 (development)** — MySQL driver (custom TCP + wire protocol, mysql_native_password auth, prepared statements)
+- **v0.6.0 (development)** — PostgreSQL driver (custom TCP + wire protocol, MD5 auth, extended query protocol)
 - **v0.5.0 (development)** — Query builder (tagged template `sql\`...\`` + MQL chain + conditions helpers)
-- **v0.4.2 (development)** — Redis driver (custom TCP + RESP, AUTH + SELECT, connection pool)
-- **v0.4.1 (development)** — MongoDB driver (custom TCP + BSON, SCRAM-SHA-256 auth, connection pool)
+- **v0.4.2 (development)** — Redis driver (custom TCP + RESP, AUTH + SELECT, MULTI/EXEC transactions)
+- **v0.4.1 (development)** — MongoDB driver (custom TCP + BSON, SCRAM-SHA-256 auth, sessions + transactions)
 - **v0.4.0 (development)** — Universal AST + SQL parser + MQL parser + bidirectional translators
 - **v0.3.0 (stable)** — Statement format control, transaction modes, pragma helper, serialize, verbose mode
-- **294 tests** — unit, integration, concurrency, stress, FTS5, parser, translators, BSON, RESP, PG wire, MySQL wire
+- **300 tests** — unit, integration, concurrency, stress, FTS5, parser, translators, BSON, RESP, PG wire, MySQL wire, transactions
+- **5000 sequential writes** — verified stable
+- **Graceful shutdown** — drain queue → finalize statements → close DB
+- **Memory safe** — LRU cache eviction, `yocto-queue` linked-list, no unbounded growth
+- **Retry strategy** — exponential backoff with ±50% jitter (baseDelay 50ms)
+- **Zero-dependency drivers** — MongoDB, Redis, PG, MySQL — semua custom wire protocol via `Bun.connect()`
+- **Hand-written parsers** — SQL parser (recursive descent), MQL parser (object traversal), all wire protocols
+- **Observability** — built-in metrics counters, cache stats, WAL monitoring, slow query detection, verbose tracing
+- **Audit score** — 100/100 (zero BLOCKING issues)
+- **Bundle** — 80.9KB core, 5.1KB server, 114KB driver (MongoDB + Redis + PG + MySQL)
 - **5000 sequential writes** — verified stable
 - **Graceful shutdown** — drain queue → finalize statements → close DB
 - **Memory safe** — LRU cache eviction, `yocto-queue` linked-list, no unbounded growth

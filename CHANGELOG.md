@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Added (v0.8.0 — Transactions + Parameterized Queries)
+- **PG extended query protocol** — Parse/Bind/Describe/Execute/Sync for real parameterized queries (no more string interpolation)
+- **MySQL prepared statements** — COM_STMT_PREPARE + COM_STMT_EXECUTE + COM_STMT_CLOSE
+- **Unified TransactionManager** — works across all 5 backends with nested SAVEPOINT support
+- **TransactionBackend interface** — begin/commit/rollback/savepoint/release/rollbackTo
+- **PG transaction methods** — begin/commit/rollback/savepoint/releaseSavepoint/rollbackTo
+- **MySQL transaction methods** — begin/commit/rollback/savepoint/releaseSavepoint/rollbackTo
+- **Redis MULTI/EXEC/DISCARD** — transaction mode queues commands, exec returns array of results
+- **MongoDB sessions** — startSession/endSession with 16-byte UUID session ID
+- **MongoDB transactions** — startTransaction/commitTransaction/abortTransaction via sessions + lsid
+
+### Changed
+- Tests: 300 (was 294)
+- Driver bundle: 114KB (+13KB for tx + parameterized queries)
+- PGDriver.query/run now use extended query protocol when params provided (security)
+- MySQLDriver.query/run now use prepared statements when params provided (security)
+
+### Fixed
+- MySQL parseColumnDefinition: DataView byteOffset miscalculation — was reading column metadata from wrong buffer position (byteOffset + data.length instead of byteOffset)
+
 ### Added (v0.7.0 — MySQL Driver)
 - **Custom MySQL wire protocol** — zero npm dependencies, big-endian packet framing:
   - **Packet format** — 3-byte LE length + 1-byte sequence ID + payload
