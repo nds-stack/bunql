@@ -88,7 +88,7 @@ export async function performScramSha256(
     throw new ScramError("Authentication failed", finalResp.code ?? -1);
   }
 
-  const finalPayloadStr = base64decode(finalResp.payload as unknown as string);
+  const finalPayloadStr = base64decode(finalResp.payload);
   const vParts = finalPayloadStr.split(",").filter((p: string) => p.startsWith("v="));
   if (vParts.length > 0) {
     const serverSig = base64decodeToBytes(vParts[0]!.substring(2));

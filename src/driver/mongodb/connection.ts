@@ -86,6 +86,11 @@ export class MongoConnection {
 
     const headerBytes = await this.#readBytes(16);
     const header = readHeader(headerBytes);
+
+    if (header.messageLength < 16) {
+      throw new MongoError(`Invalid message header: messageLength=${header.messageLength}`);
+    }
+
     const bodyBytes = await this.#readBytes(header.messageLength - 16);
 
     const fullResponse = new Uint8Array(header.messageLength);
@@ -198,6 +203,7 @@ export class ConnectionPool {
           this.#active++;
           return conn;
         }
+        conn.close();
       }
 
       if (this.totalConnections < this.#maxSize) {
