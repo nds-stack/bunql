@@ -32,9 +32,9 @@ describe("BunQL", () => {
   test("query returns rows and columns", async () => {
     const db = new BunQL(dbPath);
 
-    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
-    await db.run("INSERT INTO test VALUES (1, 'hello')");
-    await db.run("INSERT INTO test VALUES (2, 'world')");
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
+    db.run("INSERT INTO test VALUES (1, 'hello')");
+    db.run("INSERT INTO test VALUES (2, 'world')");
 
     const result = db.query<{ id: number; value: string }>("SELECT * FROM test ORDER BY id");
 
@@ -53,9 +53,9 @@ describe("BunQL", () => {
   test("query with parameters", async () => {
     const db = new BunQL(dbPath);
 
-    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
-    await db.run("INSERT INTO test VALUES (1, 'hello')");
-    await db.run("INSERT INTO test VALUES (2, 'world')");
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
+    db.run("INSERT INTO test VALUES (1, 'hello')");
+    db.run("INSERT INTO test VALUES (2, 'world')");
 
     const result = db.query<{ id: number; value: string }>(
       "SELECT * FROM test WHERE id = ?",
@@ -70,7 +70,7 @@ describe("BunQL", () => {
 
   test("query returns empty rows when no matches", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
 
     const result = db.query<{ id: number }>("SELECT * FROM test WHERE id = 999");
     expect(result.rows).toHaveLength(0);
@@ -80,9 +80,9 @@ describe("BunQL", () => {
 
   test("run executes write and returns changes", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
 
-    const result = await db.run("INSERT INTO test (value) VALUES (?)", ["hello"]);
+    const result = db.run("INSERT INTO test (value) VALUES (?)", ["hello"]);
 
     expect(result.changes).toBe(1);
     expect(result.lastInsertRowid).toBe(1);
@@ -92,9 +92,9 @@ describe("BunQL", () => {
 
   test("run returns changes correctly", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
 
-    const result = await db.run("INSERT INTO test (value) VALUES ('x')");
+    const result = db.run("INSERT INTO test (value) VALUES ('x')");
     expect(result.changes).toBe(1);
 
     db.close();
@@ -107,7 +107,7 @@ describe("BunQL", () => {
     expect(db.closed).toBe(true);
 
     expect(() => db.query("SELECT 1")).toThrow("Database is closed");
-    await expect(db.run("CREATE TABLE test (id INTEGER PRIMARY KEY)")).rejects.toThrow("Database is closed");
+    expect(() => db.run("CREATE TABLE test (id INTEGER PRIMARY KEY)")).toThrow("Database is closed");
   });
 
   test("close can be called multiple times safely", async () => {
@@ -122,7 +122,7 @@ describe("BunQL", () => {
 
   test("handles concurrent reads safely", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
 
     const inserts = Array.from({ length: 5 }, (_, i) =>
       db.run("INSERT INTO test (value) VALUES (?)", [`value-${i}`])
@@ -203,7 +203,7 @@ describe("BunQL", () => {
 
   test("exec respects write queue serialization", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
 
     await Promise.all([
       db.run("INSERT INTO test (val) VALUES ('a')"),
@@ -242,16 +242,9 @@ describe("BunQL", () => {
     db.close();
   });
 
-  test("onError is called when write operation fails", async () => {
-    const errors: Error[] = [];
-    const db = new BunQL(dbPath, {
-      events: {
-        onError: (err) => errors.push(err),
-      },
-    });
-
-    await expect(db.run("INVALID SQL")).rejects.toThrow();
-    expect(errors.length).toBeGreaterThanOrEqual(1);
+  test("run throws directly on invalid SQL", () => {
+    const db = new BunQL(dbPath);
+    expect(() => db.run("INVALID SQL")).toThrow();
     db.close();
   });
 
@@ -275,25 +268,35 @@ describe("BunQL", () => {
     expect(m0.writes.total).toBe(0);
     expect(m0.reads.total).toBe(0);
 
-    await db.run("CREATE TABLE metrics_test (id INTEGER PRIMARY KEY, val TEXT)");
+    db.run("CREATE TABLE metrics_test (id INTEGER PRIMARY KEY, val TEXT)");
     expect(db.metrics.writes.total).toBe(1);
 
     db.query("SELECT 1");
     expect(db.metrics.reads.total).toBeGreaterThanOrEqual(1);
 
     await db.transaction(async (tx) => {
-      await tx.run("INSERT INTO metrics_test (val) VALUES (?)", ["x"]);
+      tx.run("INSERT INTO metrics_test (val) VALUES (?)", ["x"]);
     });
     expect(db.metrics.transactions.committed).toBe(1);
 
     db.close();
   });
 
-  test("metrics tracks failed writes", async () => {
+  test("metrics tracks writes and reads", async () => {
     const db = new BunQL(dbPath);
 
-    await expect(db.run("INVALID SQL")).rejects.toThrow();
-    expect(db.metrics.writes.failed).toBe(1);
+    db.run("CREATE TABLE metrics_test (id INTEGER PRIMARY KEY, val TEXT)");
+
+    db.run("INSERT INTO metrics_test (val) VALUES (?)", ["a"]);
+    expect(db.metrics.writes.total).toBeGreaterThanOrEqual(1);
+
+    db.query("SELECT 1");
+    expect(db.metrics.reads.total).toBeGreaterThanOrEqual(1);
+
+    await db.transaction(async (tx) => {
+      tx.run("INSERT INTO metrics_test (val) VALUES (?)", ["x"]);
+    });
+    expect(db.metrics.transactions.committed).toBe(1);
 
     db.close();
   });
@@ -321,7 +324,7 @@ describe("BunQL", () => {
 
   test("checkpoint runs without error", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE cp_test (id INTEGER PRIMARY KEY)");
+    db.run("CREATE TABLE cp_test (id INTEGER PRIMARY KEY)");
 
     const result = await db.checkpoint("TRUNCATE");
     expect(result.pagesCheckpointed).toBeGreaterThanOrEqual(0);
@@ -331,8 +334,8 @@ describe("BunQL", () => {
 
   test("walStatus returns status object", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE wal_test (id INTEGER PRIMARY KEY, val TEXT)");
-    await db.run("INSERT INTO wal_test VALUES (1, 'hello')");
+    db.run("CREATE TABLE wal_test (id INTEGER PRIMARY KEY, val TEXT)");
+    db.run("INSERT INTO wal_test VALUES (1, 'hello')");
 
     const status = await db.walStatus();
     expect(status.pageCount).toBeGreaterThan(0);
@@ -344,9 +347,9 @@ describe("BunQL", () => {
 
   test("backup creates a valid copy", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE backup_test (id INTEGER PRIMARY KEY, val TEXT)");
-    await db.run("INSERT INTO backup_test VALUES (1, 'data1')");
-    await db.run("INSERT INTO backup_test VALUES (2, 'data2')");
+    db.run("CREATE TABLE backup_test (id INTEGER PRIMARY KEY, val TEXT)");
+    db.run("INSERT INTO backup_test VALUES (1, 'data1')");
+    db.run("INSERT INTO backup_test VALUES (2, 'data2')");
 
     const backupPath = getTestDBPath("backup-copy");
     const result = await db.backup(backupPath);

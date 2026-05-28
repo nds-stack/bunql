@@ -20,11 +20,11 @@ describe("Transaction", () => {
 
   test("transaction commits changes on success", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
 
     const result = await db.transaction(async (tx) => {
-      await tx.run("INSERT INTO users (name) VALUES (?)", ["Alice"]);
-      await tx.run("INSERT INTO users (name) VALUES (?)", ["Bob"]);
+      tx.run("INSERT INTO users (name) VALUES (?)", ["Alice"]);
+      tx.run("INSERT INTO users (name) VALUES (?)", ["Bob"]);
       return "done";
     });
 
@@ -40,12 +40,12 @@ describe("Transaction", () => {
 
   test("transaction rolls back on error, preserving original cause", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
-    await db.run("INSERT INTO users (name) VALUES ('Initial')");
+    db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    db.run("INSERT INTO users (name) VALUES ('Initial')");
 
     try {
       await db.transaction(async (tx) => {
-        await tx.run("INSERT INTO users (name) VALUES (?)", ["Alice"]);
+        tx.run("INSERT INTO users (name) VALUES (?)", ["Alice"]);
         throw new Error("something went wrong");
       });
       expect.unreachable();
@@ -63,10 +63,10 @@ describe("Transaction", () => {
 
   test("transaction reads within transaction see uncommitted data", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
 
     await db.transaction(async (tx) => {
-      await tx.run("INSERT INTO users (name) VALUES (?)", ["Alice"]);
+      tx.run("INSERT INTO users (name) VALUES (?)", ["Alice"]);
 
       const users = tx.query<{ name: string }>("SELECT name FROM users");
       expect(users).toHaveLength(1);
@@ -78,10 +78,10 @@ describe("Transaction", () => {
 
   test("nested transaction via SAVEPOINT", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
 
     await db.transaction(async (tx) => {
-      await tx.run("INSERT INTO users (name) VALUES (?)", ["Alice"]);
+      tx.run("INSERT INTO users (name) VALUES (?)", ["Alice"]);
 
       // Nested transaction
       await db.transaction(async (inner) => {
@@ -97,10 +97,10 @@ describe("Transaction", () => {
 
   test("nested transaction rollback does not affect outer", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
 
     await db.transaction(async (tx) => {
-      await tx.run("INSERT INTO users (name) VALUES (?)", ["Alice"]);
+      tx.run("INSERT INTO users (name) VALUES (?)", ["Alice"]);
 
       try {
         await db.transaction(async (inner) => {
@@ -113,7 +113,7 @@ describe("Transaction", () => {
       }
 
       // Re-insert Bob after inner rollback
-      await tx.run("INSERT INTO users (name) VALUES (?)", ["Bob"]);
+      tx.run("INSERT INTO users (name) VALUES (?)", ["Bob"]);
     });
 
     const users = db.query<{ name: string }>("SELECT name FROM users ORDER BY id");
@@ -124,14 +124,14 @@ describe("Transaction", () => {
 
   test("transactions are serialized (no interleaving)", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE counters (id INTEGER PRIMARY KEY, val INTEGER)");
-    await db.run("INSERT INTO counters VALUES (1, 0)");
+    db.run("CREATE TABLE counters (id INTEGER PRIMARY KEY, val INTEGER)");
+    db.run("INSERT INTO counters VALUES (1, 0)");
 
     const txs = Array.from({ length: 10 }, (_, i) =>
       db.transaction(async (tx) => {
         const rows = tx.query<{ val: number }>("SELECT val FROM counters WHERE id = 1");
         const current = rows[0]?.val ?? 0;
-        await tx.run("UPDATE counters SET val = ? WHERE id = 1", [current + 1]);
+        tx.run("UPDATE counters SET val = ? WHERE id = 1", [current + 1]);
         return i;
       })
     );
@@ -147,8 +147,8 @@ describe("Transaction", () => {
 
   test("transaction context can also run read queries", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
-    await db.run("INSERT INTO users (name) VALUES ('Alice')");
+    db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    db.run("INSERT INTO users (name) VALUES ('Alice')");
 
     await db.transaction(async (tx) => {
       // read-only query inside transaction
@@ -156,7 +156,7 @@ describe("Transaction", () => {
       expect(users).toHaveLength(1);
       expect(users[0]?.name).toBe("Alice");
 
-      await tx.run("INSERT INTO users (name) VALUES (?)", ["Bob"]);
+      tx.run("INSERT INTO users (name) VALUES (?)", ["Bob"]);
     });
 
     db.close();
@@ -164,12 +164,12 @@ describe("Transaction", () => {
 
   test("concurrent transaction reads are allowed during write", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
 
     const writePromise = db.transaction(async (tx) => {
-      await tx.run("INSERT INTO users (name) VALUES (?)", ["Alice"]);
+      tx.run("INSERT INTO users (name) VALUES (?)", ["Alice"]);
       await Bun.sleep(20);
-      await tx.run("INSERT INTO users (name) VALUES (?)", ["Bob"]);
+      tx.run("INSERT INTO users (name) VALUES (?)", ["Bob"]);
     });
 
     // Reads should not block during transaction
@@ -183,10 +183,10 @@ describe("Transaction", () => {
 
   test("batch inside transaction executes multiple operations atomically", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
 
     await db.transaction(async (tx) => {
-      const results = await tx.batch([
+      const results = tx.batch([
         { sql: "INSERT INTO users (name) VALUES (?)", params: ["Alice"] },
         { sql: "INSERT INTO users (name) VALUES (?)", params: ["Bob"] },
       ]);

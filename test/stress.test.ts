@@ -20,10 +20,10 @@ describe("Stress: long-running stability", () => {
     const path = makeDBPath("sequential");
     const db = new BunQL(path);
 
-    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
 
     for (let i = 0; i < 5000; i++) {
-      await db.run("INSERT INTO test (val) VALUES (?)", [`seq-${i}`]);
+      db.run("INSERT INTO test (val) VALUES (?)", [`seq-${i}`]);
     }
 
     const count = db.query<{ cnt: number }>("SELECT COUNT(*) as cnt FROM test");
@@ -36,7 +36,7 @@ describe("Stress: long-running stability", () => {
   test("50 concurrent writes in 5 batches", async () => {
     const path = makeDBPath("concurrent");
     const db = new BunQL(path);
-    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
 
     for (let batch = 0; batch < 5; batch++) {
       const writes = Array.from({ length: 50 }, (_, i) =>
@@ -55,14 +55,14 @@ describe("Stress: long-running stability", () => {
   test("20 concurrent transactions increment counter", async () => {
     const path = makeDBPath("tx-storm");
     const db = new BunQL(path);
-    await db.run("CREATE TABLE counter (id INTEGER PRIMARY KEY, val INTEGER)");
-    await db.run("INSERT INTO counter VALUES (1, 0)");
+    db.run("CREATE TABLE counter (id INTEGER PRIMARY KEY, val INTEGER)");
+    db.run("INSERT INTO counter VALUES (1, 0)");
 
     const txs = Array.from({ length: 20 }, () =>
       db.transaction(async (tx) => {
         const rows = tx.query<{ val: number }>("SELECT val FROM counter WHERE id = 1");
         const current = rows[0]?.val ?? 0;
-        await tx.run("UPDATE counter SET val = ? WHERE id = 1", [current + 1]);
+        tx.run("UPDATE counter SET val = ? WHERE id = 1", [current + 1]);
       }),
     );
 
@@ -81,9 +81,9 @@ describe("Stress: long-running stability", () => {
     for (let cycle = 0; cycle < 10; cycle++) {
       const db = new BunQL(path);
       if (cycle === 0) {
-        await db.run("CREATE TABLE IF NOT EXISTS test (id INTEGER PRIMARY KEY, val TEXT)");
+        db.run("CREATE TABLE IF NOT EXISTS test (id INTEGER PRIMARY KEY, val TEXT)");
       }
-      await db.run("INSERT INTO test (val) VALUES (?)", [`cycle-${cycle}`]);
+      db.run("INSERT INTO test (val) VALUES (?)", [`cycle-${cycle}`]);
       await db.close();
 
       // Verify we can reopen and read
@@ -99,11 +99,11 @@ describe("Stress: long-running stability", () => {
   test("statement cache pressure with 150 unique queries", async () => {
     const path = makeDBPath("cache-pressure");
     const db = new BunQL(path);
-    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
 
     // Insert data
     for (let i = 0; i < 150; i++) {
-      await db.run("INSERT INTO test (val) VALUES (?)", [`val-${i}`]);
+      db.run("INSERT INTO test (val) VALUES (?)", [`val-${i}`]);
     }
 
     // Query with 150 unique SQL patterns to stress the cache (maxSize=100)
@@ -122,26 +122,23 @@ describe("Stress: long-running stability", () => {
   test("mixed workload: 100 interleaved reads/writes/transactions", async () => {
     const path = makeDBPath("mixed");
     const db = new BunQL(path);
-    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
-    await db.run("INSERT INTO test VALUES (1, 'initial')");
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
+    db.run("INSERT INTO test VALUES (1, 'initial')");
 
-    const ops: Promise<unknown>[] = [];
+    const txOps: Promise<unknown>[] = [];
 
     for (let i = 0; i < 100; i++) {
       if (i % 3 === 0) {
-        // Write
-        ops.push(db.run("INSERT INTO test (val) VALUES (?)", [`write-${i}`]));
+        db.run("INSERT INTO test (val) VALUES (?)", [`write-${i}`]);
       } else if (i % 3 === 1) {
-        // Read
-        ops.push(Promise.resolve(db.query("SELECT COUNT(*) as cnt FROM test")));
+        db.query("SELECT COUNT(*) as cnt FROM test");
       } else {
-        // Transaction
-        ops.push(
+        txOps.push(
           db.transaction(async (tx) => {
             const rows = tx.query<{ val: string }>(
               "SELECT val FROM test ORDER BY id DESC LIMIT 1",
             );
-            await tx.run("INSERT INTO test (val) VALUES (?)", [
+            tx.run("INSERT INTO test (val) VALUES (?)", [
               `tx-${rows[0]?.val ?? "none"}`,
             ]);
           }),
@@ -149,7 +146,7 @@ describe("Stress: long-running stability", () => {
       }
     }
 
-    await Promise.all(ops);
+    await Promise.all(txOps);
     await db.close();
     cleanup(path);
   }, 20000);
@@ -157,7 +154,7 @@ describe("Stress: long-running stability", () => {
   test("stress: batch operations with large arrays", async () => {
     const path = makeDBPath("batch-stress");
     const db = new BunQL(path);
-    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
 
     const batchSize = 50;
     const operations = Array.from({ length: batchSize }, (_, i) => ({
@@ -193,14 +190,12 @@ describe("Stress: graceful shutdown", () => {
   test("close during active writes does not hang", async () => {
     const path = makeDBPath("close-writes");
     const db = new BunQL(path);
-    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
 
-    // Fire concurrent writes
     for (let i = 0; i < 30; i++) {
-      db.run("INSERT INTO test (val) VALUES (?)", [`spam-${i}`]).catch(() => {});
+      db.run("INSERT INTO test (val) VALUES (?)", [`spam-${i}`]);
     }
 
-    // Close immediately
     await db.close();
     expect(db.closed).toBe(true);
     cleanup(path);
@@ -209,13 +204,13 @@ describe("Stress: graceful shutdown", () => {
   test("close during active transaction is safe", async () => {
     const path = makeDBPath("close-tx");
     const db = new BunQL(path);
-    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
 
     // Start a slow transaction
     const txPromise = db.transaction(async (tx) => {
-      await tx.run("INSERT INTO test (val) VALUES (?)", ["before"]);
+      tx.run("INSERT INTO test (val) VALUES (?)", ["before"]);
       await Bun.sleep(50);
-      await tx.run("INSERT INTO test (val) VALUES (?)", ["after"]);
+      tx.run("INSERT INTO test (val) VALUES (?)", ["after"]);
     }).catch(() => {});
 
     // Close during the transaction
@@ -227,32 +222,31 @@ describe("Stress: graceful shutdown", () => {
     cleanup(path);
   }, 10000);
 
-  test("close during retry is safe", async () => {
+  test("batch write during mixed load is consistent", async () => {
     const path = makeDBPath("close-retry");
-    const db = new BunQL(path, {
-      retry: { maxRetries: 3, baseDelay: 50, maxDelay: 100, jitter: false },
-    });
-    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
+    const db = new BunQL(path);
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
 
-    // This will retry and eventually succeed
-    const writePromise = db.run("INSERT INTO test (val) VALUES (?)", ["retry-test"]).catch(() => {});
+    await db.batch(Array.from({ length: 10 }, (_, i) => ({
+      sql: "INSERT INTO test (val) VALUES (?)",
+      params: [`batch-${i}`],
+    })));
 
-    await Bun.sleep(10);
+    const count = db.query<{ cnt: number }>("SELECT COUNT(*) as cnt FROM test");
+    expect(count.rows[0]?.cnt).toBe(10);
+
     await db.close();
-    expect(db.closed).toBe(true);
-
-    await writePromise;
     cleanup(path);
   }, 10000);
 
   test("close after big error is safe", async () => {
     const path = makeDBPath("close-error");
     const db = new BunQL(path);
-    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
 
     // Cause an error
     try {
-      await db.run("INVALID SQL STATEMENT");
+      db.run("INVALID SQL STATEMENT");
     } catch {
       // expected
     }
@@ -269,7 +263,7 @@ describe("Stress: graceful shutdown", () => {
     await db.close();
 
     expect(() => db.query("SELECT 1")).toThrow("Database is closed");
-    await expect(db.run("SELECT 1")).rejects.toThrow("Database is closed");
+    expect(() => db.run("SELECT 1")).toThrow("Database is closed");
     await expect(db.transaction(async () => {})).rejects.toThrow("Database is closed");
 
     expect(() => db.prepare("SELECT 1")).toThrow("Database is closed");

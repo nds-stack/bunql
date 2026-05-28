@@ -78,9 +78,9 @@ describe("Prepared Statement", () => {
 
   test("prepare creates a reusable statement", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
-    await db.run("INSERT INTO users (name) VALUES ('Alice')");
-    await db.run("INSERT INTO users (name) VALUES ('Bob')");
+    db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    db.run("INSERT INTO users (name) VALUES ('Alice')");
+    db.run("INSERT INTO users (name) VALUES ('Bob')");
 
     const stmt = db.prepare<{ id: number; name: string }, [string]>(
       "SELECT * FROM users WHERE name = ?"
@@ -100,13 +100,13 @@ describe("Prepared Statement", () => {
 
   test("prepare.run executes write and returns changes", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
 
     const stmt = db.prepare<unknown, [string]>(
       "INSERT INTO users (name) VALUES (?)"
     );
 
-    const result = await stmt.run("Alice");
+    const result = stmt.run("Alice");
     expect(result.changes).toBe(1);
 
     const users = db.query<{ name: string }>("SELECT name FROM users");
@@ -127,7 +127,7 @@ describe("Prepared Statement", () => {
 
   test("prepare.finalize removes from cache so new prepare re-creates", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
 
     const stmt1 = db.prepare("SELECT * FROM users");
     stmt1.finalize();
@@ -142,10 +142,10 @@ describe("Prepared Statement", () => {
 
   test("prepare.run goes through write queue and returns durationMs", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
 
     const stmt = db.prepare<unknown, [string]>("INSERT INTO test (val) VALUES (?)");
-    const result = await stmt.run("queued");
+    const result = stmt.run("queued");
 
     expect(result.changes).toBe(1);
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
@@ -171,7 +171,7 @@ describe("Batch", () => {
 
   test("batch executes multiple operations", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
 
     const results = await db.batch([
       { sql: "INSERT INTO users (name) VALUES (?)", params: ["Alice"] },
@@ -194,7 +194,7 @@ describe("Batch", () => {
 
   test("batch rolls back all operations on failure", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
 
     try {
       await db.batch([
@@ -214,7 +214,7 @@ describe("Batch", () => {
 
   test("batch with single operation still works", async () => {
     const db = new BunQL(dbPath);
-    await db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
 
     const results = await db.batch([
       { sql: "INSERT INTO users (name) VALUES (?)", params: ["Solo"] },

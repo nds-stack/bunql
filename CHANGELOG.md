@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased]
+
+## [0.2.0] - 2026-05-28
+
+### Changed (BREAKING)
+- **`run()` is now synchronous** — returns `RunResult`, not `Promise<RunResult>`. No WriteQueue, no retry, no hooks in write path. `await db.run()` → `db.run()`.
+- **`Statement.run()` is now synchronous** — same as above. `await stmt.run()` → `stmt.run()`.
+- **`TransactionContext.run()` / `.batch()` are now synchronous**
+- **Removed `runSync()` / `querySync()`** — merged into `run()` / `query()` (both are now sync)
+- **Removed `beforeWrite` / `afterWrite` hooks** — sync writes don't need queue hooks
+- **Removed `onBusy` / `onDrain` from write path** — no queue = no drain, no retry = no busy
+- **`metrics.writes.failed` no longer incremented** — sync writes throw directly
+- **Repositioned as ergonomic wrapper** — not a "concurrent write safety" layer
+
+### Internal
+- WriteQueue retained for `transaction()`, `batch()`, `exec()`, `backup()`, `vacuum()`, `checkpoint()` — operations that genuinely need serialization
+
 ## [0.1.4] - 2026-05-28
 
 ### Added

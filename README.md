@@ -1,6 +1,6 @@
 # @nds-stack/bunql
 
-> Lightweight SQLite wrapper for Bun — queued writes, serialized transactions, SQLITE_BUSY handling.
+> Ergonomic SQLite wrapper for Bun — transaction safety, statement caching, observability. Zero overhead on writes.
 
 [![npm version](https://img.shields.io/npm/v/%40nds-stack%2Fbunql?color=blue&logo=npm)](https://www.npmjs.com/package/@nds-stack/bunql)
 [![Bun](https://img.shields.io/badge/Bun-%3E%3D1.3.0-black?logo=bun)](https://bun.sh)
@@ -36,18 +36,34 @@
 
 ## Why bunql
 
-**Problem:** SQLite allows only one writer at a time. Concurrent writes produce `SQLITE_BUSY` errors. Developers must manually implement retry logic, queue writes, and serialize transactions — error-prone boilerplate that every SQLite project reinvents.
+**`bun:sqlite` is already fast.** Its `stmt.run()` and `stmt.all()` are synchronous C bindings — zero overhead. bunql doesn't try to beat raw speed.
 
-**Solution:** bunql wraps `bun:sqlite` with a `WriteQueue` that serializes all write operations. Reads remain parallel and lock-free (WAL mode). Transactions are serialized with automatic rollback. The result: safe concurrency with zero application-level retry logic.
+**bunql adds safety and ergonomics** where `bun:sqlite` leaves you on your own:
+
+| Raw `bun:sqlite` | bunql |
+|---|---|
+| Manual `BEGIN/COMMIT/ROLLBACK` | `db.transaction(cb)` — auto-rollback, SAVEPOINT nesting |
+| Manual statement lifecycle | LRU cache (100), auto-finalize on close |
+| Manual cleanup on shutdown | `db.close()` — drain pending ops, finalize cache |
+| No built-in observability | `db.metrics`, `db.cacheStats`, slow query logging |
+| No reader pool for WAL | `readerPool: N` — round-robin parallel reads |
+| PRAGMA setup manual | Auto-configure WAL, sync=NORMAL, FK=ON, cache |
+| FTS5 API manual | `db.fts.search()`, insert, optimize, rebuild |
 
 ```typescript
 const db = new BunQL("./app.db");
 
-// 100 concurrent writes — safe by default, no SQLITE_BUSY
-const writes = Array.from({ length: 100 }, (_, i) =>
-  db.run("INSERT INTO logs (message) VALUES (?)", [`log-${i}`])
-);
-await Promise.all(writes);
+// Writes are synchronous — just like raw bun:sqlite
+db.run("INSERT INTO users (name) VALUES (?)", ["Alice"]);
+
+// Read — cached prepared statement
+const users = db.query<{ id: number; name: string }>("SELECT * FROM users");
+
+// Transaction — async with auto-rollback
+await db.transaction(async (tx) => {
+  tx.run("UPDATE accounts SET balance = balance - 100 WHERE id = 1");
+  tx.run("UPDATE accounts SET balance = balance + 100 WHERE id = 2");
+});
 ```
 
 ---
@@ -368,10 +384,9 @@ new BunQL(path: string, options?: BunQLOptions)
 |--------|---------|-------------|
 | `query(sql, params?)` | `QueryResult<T>` | Read query. Parallel-safe, uses statement cache. |
 | `querySync(sql, params?)` | `QueryResult<T>` | Synchronous read (fast path). No reader pool. |
-| `run(sql, params?)` | `Promise<RunResult>` | Write query. Serialized via queue, with retry. |
-| `runSync(sql, params?)` | `RunResult` | Synchronous write (fast path). No queue, no retry — accepts SQLITE_BUSY risk. |
+| `run(sql, params?)` | `RunResult` | Write query. Synchronous — direct `stmt.run()`. |
 | `transaction(callback)` | `Promise<T>` | Serialized transaction. Auto-rollback on error. |
-| `prepare(sql)` | `Statement<T, P>` | Cached prepared statement. |
+| `prepare(sql)` | `Statement<T, P>` | Cached prepared statement. `.run()` is sync. |
 | `batch(operations)` | `Promise<RunResult[]>` | Atomic multi-write transaction. |
 | `exec(sql)` | `Promise<void>` | Multi-statement SQL (schema files, migrations). Serialized via queue. |
 | `walStatus()` | `Promise<WalStatus>` | WAL file size, page info, checkpoint requirement. |
@@ -757,7 +772,7 @@ Each HTTP request enters the same `WriteQueue`, ensuring serialized writes acros
 
 ## Stability
 
-- **v0.1.4 (stable)** — sync API fast path + optional metrics + query timeout
+- **v0.2.0 (stable)** — BREAKING: sync `run()`, honest architecture — no fake concurrency safety
 - **111 tests** — unit, integration, concurrency, stress, FTS5, reader pool
 - **5000 sequential writes** — verified stable
 - **Graceful shutdown** — drain queue → finalize statements → close DB

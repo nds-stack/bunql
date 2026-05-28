@@ -246,54 +246,21 @@ export class BunQL {
     return { rows, columns, durationMs };
   }
 
-  async run(sql: string, params?: SQLQueryBindings[]): Promise<RunResult> {
+  run(sql: string, params?: SQLQueryBindings[]): RunResult {
     this.#ensureOpen();
-
     if (this.#metricsEnabled) this.#metrics.writes.total++;
-    const start = this.#metricsEnabled ? performance.now() : 0;
-    this.#config.hooks?.beforeWrite?.(sql, params ?? []);
-
-    try {
-      const result = await this.#writeQueue.enqueue(async () => {
-        return await this.#retryPolicy.execute(async () => {
-          const stmt = this.#statementCache.get(sql);
-          const raw = stmt.run(...(params ?? []));
-          return {
-            changes: raw.changes,
-            lastInsertRowid: raw.lastInsertRowid,
-            durationMs: this.#metricsEnabled ? performance.now() - start : 0,
-          };
-        });
-      });
-
-      const durationMs = this.#metricsEnabled ? performance.now() - start : 0;
-      if (this.#config.slowQueryThreshold > 0 && durationMs > this.#config.slowQueryThreshold) {
-        this.#config.events?.onSlowQuery?.(sql, durationMs);
-      }
-      this.#config.hooks?.afterWrite?.(sql, params ?? [], durationMs);
-      return result;
-    } catch (error) {
-      if (this.#metricsEnabled) this.#metrics.writes.failed++;
-      const err = error instanceof Error ? error : new Error(String(error));
-      this.#onError?.(err);
-      throw new QueueError(
-        "Write operation failed",
-        { cause: err },
-      );
-    }
-  }
-
-  runSync(sql: string, params?: SQLQueryBindings[]): RunResult {
-    this.#ensureOpen();
     const start = this.#metricsEnabled ? performance.now() : 0;
     const stmt = this.#statementCache.get(sql);
     const raw = stmt.run(...(params ?? []));
-    const durationMs = this.#metricsEnabled ? performance.now() - start : 0;
-    return {
+    const result: RunResult = {
       changes: raw.changes,
       lastInsertRowid: raw.lastInsertRowid,
-      durationMs,
+      durationMs: this.#metricsEnabled ? performance.now() - start : 0,
     };
+    if (this.#config.slowQueryThreshold > 0 && result.durationMs > this.#config.slowQueryThreshold) {
+      this.#config.events?.onSlowQuery?.(sql, result.durationMs);
+    }
+    return result;
   }
 
   async transaction<T>(
@@ -318,18 +285,14 @@ export class BunQL {
       get: (...params: P): T | undefined => {
         return stmt.get(...params) as T | undefined;
       },
-      run: async (...params: P): Promise<RunResult> => {
-        return this.#writeQueue.enqueue(async () => {
-          return this.#retryPolicy.execute(async () => {
-            const start = performance.now();
-            const result = stmt.run(...params);
-            return {
-              changes: result.changes,
-              lastInsertRowid: result.lastInsertRowid,
-              durationMs: performance.now() - start,
-            };
-          });
-        });
+      run: (...params: P): RunResult => {
+        const start = this.#metricsEnabled ? performance.now() : 0;
+        const result = stmt.run(...params);
+        return {
+          changes: result.changes,
+          lastInsertRowid: result.lastInsertRowid,
+          durationMs: this.#metricsEnabled ? performance.now() - start : 0,
+        };
       },
       finalize: () => {
         this.#statementCache.remove(sql);

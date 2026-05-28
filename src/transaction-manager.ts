@@ -8,10 +8,10 @@ import type { BunQLHooks, Logger, BatchOperation } from "./types/options.ts";
 import { WriteQueue } from "./write-queue.ts";
 
 export interface TransactionContext {
-  run(sql: string, params?: SQLQueryBindings[]): Promise<RunResult>;
+  run(sql: string, params?: SQLQueryBindings[]): RunResult;
   query<T = unknown>(sql: string, params?: SQLQueryBindings[]): T[];
   prepare<T = unknown, P extends SQLQueryBindings[] = SQLQueryBindings[]>(sql: string): Statement<T, P>;
-  batch(operations: BatchOperation[]): Promise<RunResult[]>;
+  batch(operations: BatchOperation[]): RunResult[];
 }
 
 export interface TxMetrics {
@@ -163,20 +163,20 @@ export class TransactionManager {
       return {
         all: (...params: P): T[] => stmt.all(...params) as T[],
         get: (...params: P): T | undefined => stmt.get(...params) as T | undefined,
-        run: (...params: P): Promise<RunResult> => {
+        run: (...params: P): RunResult => {
           const start = performance.now();
           const result = stmt.run(...params);
-          return Promise.resolve({
+          return {
             changes: result.changes,
             lastInsertRowid: result.lastInsertRowid,
             durationMs: performance.now() - start,
-          });
+          };
         },
         finalize: () => stmt.finalize(),
       };
     };
 
-    const executeBatch = async (operations: BatchOperation[]): Promise<RunResult[]> => {
+    const executeBatch = (operations: BatchOperation[]): RunResult[] => {
       const results: RunResult[] = [];
       for (const op of operations) {
         const start = performance.now();
@@ -192,12 +192,12 @@ export class TransactionManager {
     };
 
     return {
-      run: async (sql: string, params?: SQLQueryBindings[]): Promise<RunResult> => {
-        return Promise.resolve(executeRun(sql, params));
+      run: (sql: string, params?: SQLQueryBindings[]): RunResult => {
+        return executeRun(sql, params);
       },
       query: <T>(sql: string, params?: SQLQueryBindings[]): T[] => executeQuery<T>(sql, params),
       prepare: <T, P extends SQLQueryBindings[]>(sql: string): Statement<T, P> => executePrepare<T, P>(sql),
-      batch: (operations: BatchOperation[]): Promise<RunResult[]> => executeBatch(operations),
+      batch: (operations: BatchOperation[]): RunResult[] => executeBatch(operations),
     };
   }
 

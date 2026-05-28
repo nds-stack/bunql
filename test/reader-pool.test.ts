@@ -16,7 +16,7 @@ describe("ReaderPool", () => {
 
   test("reader pool processes reads in parallel", async () => {
     const db = new BunQL(dbPath, { readerPool: 3 });
-    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
 
     const reads = Array.from({ length: 30 }, (_, i) =>
       db.query("SELECT ? AS val", [i]),
@@ -30,7 +30,7 @@ describe("ReaderPool", () => {
 
   test("reader pool does not affect writes", async () => {
     const db = new BunQL(dbPath, { readerPool: 2 });
-    await db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
 
     const writes = Array.from({ length: 10 }, (_, i) =>
       db.run("INSERT INTO test (val) VALUES (?)", [`val-${i}`]),
