@@ -1,12 +1,17 @@
 import { describe, test, expect } from "bun:test";
 import { sql, SqlQuery } from "../../src/query/sql-builder.ts";
 import { MqlQuery } from "../../src/query/mql-builder.ts";
+import { BunQL } from "../../src/bunql.ts";
 import {
   eq, neq, gt, lt, gte, lte,
   and, or, not, like, inList, between,
   isNull, isNotNull, asc, desc,
   col, lit, func,
 } from "../../src/query/conditions.ts";
+import type {
+  EqCondition, AndCondition, OrCondition,
+  LikeCondition, InCondition, BetweenCondition,
+} from "../../src/ast/ast.ts";
 
 describe("sql tagged template", () => {
   test("basic query", () => {
@@ -61,7 +66,7 @@ describe("SqlQuery", () => {
       executeRun: () => ({ changes: 0, lastInsertRowid: 0 }),
       isAsync: false,
     });
-    const result = q.all<{ id: number; name: string }>();
+    const result = q.all<{ id: number; name: string }>() as { id: number; name: string }[];
     expect(result).toHaveLength(1);
     expect(result[0]!.id).toBe(1);
     expect(result[0]!.name).toBe("Alice");
@@ -76,7 +81,7 @@ describe("SqlQuery", () => {
       executeRun: () => ({ changes: 0, lastInsertRowid: 0 }),
       isAsync: false,
     });
-    const result = q.get<{ id: number; name: string }>();
+    const result = q.get<{ id: number; name: string }>() as { id: number; name: string } | null;
     expect(result).not.toBeNull();
     expect(result!.id).toBe(1);
   });
@@ -87,7 +92,7 @@ describe("SqlQuery", () => {
       executeRun: () => ({ changes: 1, lastInsertRowid: 42 }),
       isAsync: false,
     });
-    const result = q.run();
+    const result = q.run() as { changes: number; lastInsertRowid: number };
     expect(result.changes).toBe(1);
     expect(result.lastInsertRowid).toBe(42);
   });
@@ -141,38 +146,38 @@ describe("MqlQuery", () => {
 
 describe("conditions", () => {
   test("eq condition", () => {
-    const c = eq(col("id"), 1);
+    const c = eq(col("id"), 1) as EqCondition;
     expect(c.type).toBe("eq");
     expect(c.left.name).toBe("id");
     expect(c.right).toBe(1);
   });
 
   test("and condition", () => {
-    const c = and(eq(col("age"), 25), gt(col("salary"), 50000));
+    const c = and(eq(col("age"), 25), gt(col("salary"), 50000)) as AndCondition;
     expect(c.type).toBe("and");
     expect(c.conditions).toHaveLength(2);
   });
 
   test("or condition", () => {
-    const c = or(eq(col("status"), "active"), eq(col("status"), "pending"));
+    const c = or(eq(col("status"), "active"), eq(col("status"), "pending")) as OrCondition;
     expect(c.type).toBe("or");
     expect(c.conditions).toHaveLength(2);
   });
 
   test("like condition", () => {
-    const c = like(col("name"), "%Alice%");
+    const c = like(col("name"), "%Alice%") as LikeCondition;
     expect(c.type).toBe("like");
     expect(c.pattern).toBe("%Alice%");
   });
 
   test("inList condition", () => {
-    const c = inList(col("id"), [1, 2, 3]);
+    const c = inList(col("id"), [1, 2, 3]) as InCondition;
     expect(c.type).toBe("in");
     expect(c.values).toEqual([1, 2, 3]);
   });
 
   test("between condition", () => {
-    const c = between(col("age"), 18, 65);
+    const c = between(col("age"), 18, 65) as BetweenCondition;
     expect(c.type).toBe("between");
     expect(c.min).toBe(18);
     expect(c.max).toBe(65);
@@ -207,7 +212,7 @@ describe("BunQL sql() / mql()", () => {
     expect(q.sql).toBe("SELECT * FROM test WHERE name = ?");
     expect(q.params).toEqual(["Alice"]);
 
-    const rows = q.all<{ id: number; name: string }>();
+    const rows = q.all<{ id: number; name: string }>() as { id: number; name: string }[];
     expect(rows).toHaveLength(1);
     expect(rows[0]!.name).toBe("Alice");
 
@@ -215,7 +220,6 @@ describe("BunQL sql() / mql()", () => {
   });
 
   test("BunQL.mql returns MqlQuery", () => {
-    const { BunQL } = require("../../src/bunql.ts");
     const db = new BunQL(":memory:");
     const q = db.mql("users");
     expect(q).toBeInstanceOf(MqlQuery);

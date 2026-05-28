@@ -190,7 +190,7 @@ function benchBatchBunQL() {
       sql: "INSERT INTO users (name, email) VALUES (?, ?)",
       params: [`w${b * 100 + i}`, `w${b * 100 + i}@t.com`],
     }));
-    bunql.run("DELETE FROM users");
+    bunql.batch(ops);
   }
 
   const ops = Array.from({ length: 100 }, (_, i) => ({
@@ -200,7 +200,7 @@ function benchBatchBunQL() {
 
   const start = performance.now();
   for (let b = 0; b < ITERATIONS / 100; b++) {
-    bunql.run("DELETE FROM users");
+    bunql.batch(ops);
   }
   const mid = performance.now();
   bunql.close();

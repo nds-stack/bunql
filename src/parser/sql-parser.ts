@@ -4,13 +4,9 @@
  */
 import { Lexer, type Token } from "./sql-lexer.ts";
 import type { ASTNode, ColumnExpr, Condition, JoinNode, Literal, OrderByNode, SelectNode, TableRef } from "../ast/ast.ts";
+import { ParseError } from "../errors/parse-error.ts";
 
-export class ParseError extends Error {
-  constructor(message: string, public pos: number) {
-    super(`Parse error at position ${pos}: ${message}`);
-    this.name = "ParseError";
-  }
-}
+export { ParseError };
 
 export function parseSQL(sql: string): ASTNode {
   const lexer = new Lexer(sql);
