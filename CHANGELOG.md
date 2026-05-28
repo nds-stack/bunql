@@ -2,6 +2,49 @@
 
 ## [Unreleased]
 
+### Added (v0.4.1 — MongoDB Driver)
+- **Custom MongoDB driver** — zero npm dependencies, built via `Bun.connect()`:
+  - **BSON encoder** — JavaScript types → BSON bytes: string, int32, int64, double, boolean, null, document, array, ObjectId (12-byte), Date, Binary, RegExp, Timestamp
+  - **BSON decoder** — BSON bytes → JavaScript types: full round-trip verified (18 tests)
+  - **OP_MSG wire protocol** — buildCommand/parseResponse for MongoDB 3.6+ (flagBits, sections, checksum)
+  - **TCP connection pool** — `Bun.connect()` with `#readBytes`/`#tryResolvePending` pattern (no partial read data loss)
+  - **SCRAM-SHA-256 authentication** — RFC 5802 via Web Crypto API (SHA-256, HMAC, base64)
+  - **ConnectionPool** — max pool size, non-recursive acquire with deadline timeout, stale connection cleanup
+- **MongoDriver class** — `query(sql)` / `run(sql)` via SQL→AST→MongoDB pipeline
+- **DriverAdapter interface** — unified contract: `query()`, `run()`, `close()`
+- **`@nds-stack/bunql/driver` subpath** — separate entry point for MongoDB driver (45.6KB)
+- **bunql.ts auto-detect** — `mongodb://` URLs now throw helpful error directing to MongoDriver
+- **Driver tests** — 32 new tests: BSON round-trip, wire protocol parsing, MongoDriver URL parsing
+
+### Added (v0.4.0 — Universal AST + Parsers)
+- **Universal AST** — 29 node types + 10 constructors: SelectNode, InsertNode, UpdateNode, DeleteNode, AggregateNode, RawNode
+- **Condition types** — eq, neq, gt, lt, gte, lte, and, or, not, like, notLike, in, notIn, between, isNull, isNotNull
+- **Expression types** — column, alias, wildcard, literal, function, binary
+- **Aggregate stages** — match, group, sort, limit, skip, project, lookup, unwind
+- **SQL lexer** — 15 token types, keyword detection, comment skipping (102 lines)
+- **SQL parser** — hand-written recursive descent: SELECT/INSERT/UPDATE/DELETE/JOIN/GROUP BY/HAVING/ORDER BY/LIMIT/OFFSET/DISTINCT/WHERE (AND/OR/NOT/LIKE/IN/BETWEEN/IS NULL) — 369 lines
+- **MQL parser** — MongoDB object → AST: find/aggregate/insertOne/Many/updateOne/deleteOne, $gt/$lt/$in/$regex/$and/$or/$exists, aggregate stages — 173 lines
+- **SQL translator** — AST → SQLite SQL + params: all conditions, JOIN, GROUP BY, aggregation (182 lines)
+- **MongoDB translator** — AST → MongoDB find/insertOne/aggregate commands (183 lines)
+- **Redis translator** — AST → Redis RESP commands: HGETALL/HSET/DEL/ZRANGE/SCAN (132 lines)
+- **ParseError / DriverError** — extend BunQLError hierarchy
+- **Parser + translator tests** — 44 new tests covering lexer, SQL parsing, MQL parsing, all 3 translators, SQL↔MongoDB round-trip
+
+### Changed
+- Bundle size: 42.2KB core (+0.5KB for parser/translator), 5.1KB server (unchanged), 45.6KB driver (MongoDB)
+- Tests: 214 (was 138) — 182 existing + 32 new (driver) + includes 44 parser/translator from v0.4.0
+- Files: 10 new driver files + 8 parser/translator files from v0.4.0
+- README now includes MongoDB driver usage via `@nds-stack/bunql/driver` subpath
+- `package.json` exports: added `./driver` subpath
+
+### Fixed
+- **Critical:** MongoDB TCP buffer corruption — `#onData` resolved with entire buffer instead of exact `n` bytes. Fixed with `#tryResolvePending()` + `#pendingSize` tracker
+- **Critical:** Connection pool `acquire()` recursive — stack overflow under sustained load. Fixed with `while+deadline` loop
+- BSON decoder: `readDocument` endOffset calculation (startOffset ++ totalLength, not this.offset ++ totalLength)
+- Stale connections no longer silently discarded — proper `conn.close()` before pool pop
+- `messageLength >= 16` validation added to prevent negative `#readBytes` calls
+- `auth-scram.ts`: redundant `as unknown as string` cast removed
+
 ## [0.3.0] - 2026-05-28
 
 ### Added
