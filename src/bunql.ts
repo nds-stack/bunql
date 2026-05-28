@@ -18,6 +18,7 @@ import type {
   QueryResult,
   RunResult,
   Statement,
+  ColumnInfo,
   BatchOperation,
   Logger,
   EventHandlers,
@@ -30,6 +31,8 @@ import type {
   BackupResult,
   VacuumResult,
   MaintenanceConfig,
+  TransactionMode,
+  PragmaOptions,
 } from "./types/index.ts";
 
 function executeBatchOperations(
@@ -52,6 +55,13 @@ function executeBatchOperations(
     hooks?.afterWrite?.(op.sql, op.params ?? [], performance.now() - start);
   }
   return results;
+}
+
+interface StmtInternals {
+  raw: boolean;
+  pluck: boolean;
+  safeInts: boolean;
+  bound: SQLQueryBindings[] | null;
 }
 
 export class BunQL {
@@ -77,6 +87,7 @@ export class BunQL {
   #queryTimeoutMs = 0;
   #extractColumns = false;
   #pageSize = 4096;
+  #verbose: ((sql: string) => void) | null = null;
 
   constructor(path: string, options?: BunQLOptions) {
     const config = this.#resolveConfig(options);
@@ -87,18 +98,25 @@ export class BunQL {
     this.#queryTimeoutMs = config.queryTimeoutMs;
     this.#extractColumns = config.extractColumns;
 
+    if (typeof config.verbose === "function") {
+      this.#verbose = config.verbose;
+    } else if (config.verbose === true) {
+      this.#verbose = (sql: string) => this.#log("debug", sql);
+    }
+
     if (config.readerPoolSize > 0 && !config.wal) {
       throw new ConnectionError(
         "Reader pool requires WAL mode. Set `wal: true` or remove `readerPool` option.",
       );
     }
 
+    const dbOptions: { readonly?: boolean; safeIntegers?: boolean; create?: boolean } = {};
+    if (config.readonly) dbOptions.readonly = true;
+    if (config.safeIntegers) dbOptions.safeIntegers = true;
+    dbOptions.create = true;
+
     try {
-      if (config.readonly) {
-        this.#db = new Database(path, { readonly: true });
-      } else {
-        this.#db = new Database(path);
-      }
+      this.#db = new Database(path, dbOptions);
     } catch (error) {
       throw new ConnectionError(
         `Failed to open database: ${path}`,
@@ -161,6 +179,26 @@ export class BunQL {
     return this.#writeQueue.isProcessing;
   }
 
+  get name(): string {
+    this.#ensureOpen();
+    return (this.#db as unknown as { filename?: string }).filename
+      ?? (this.#db as unknown as { name?: string }).name
+      ?? "";
+  }
+
+  get memory(): boolean {
+    this.#ensureOpen();
+    return (this.#db as unknown as { memory?: boolean }).memory ?? false;
+  }
+
+  get readonly(): boolean {
+    return this.#config.readonly;
+  }
+
+  get inTransaction(): boolean {
+    return this.#transactionManager.depth > 0;
+  }
+
   get raw(): Database {
     this.#ensureOpen();
     return this.#db;
@@ -205,15 +243,74 @@ export class BunQL {
   }
 
   /**
-   * Read query. Synchronous, parallel-safe, uses statement cache.
-   *
-   * Performance notes:
-   * - `performance.now()` and counter increments skipped unless `metricsEnabled: true`.
-   * - `Object.keys(rows[0])` columns extraction skipped unless `extractColumns: true` (saves 8-12%).
-   * - Query timeout via `db.interrupt()` only activated if `queryTimeoutMs > 0`.
+   * Convenience method for PRAGMA queries. Returns structured rows, or a scalar value
+   * when `{ simple: true }` (first column of first row).
    */
+  pragma(source: string, options?: PragmaOptions): unknown {
+    this.#ensureOpen();
+    const sql = source.startsWith("PRAGMA") ? source : `PRAGMA ${source}`;
+    this.#verboseLog(sql);
+    const rows = this.#db.prepare(sql).all();
+    if (options?.simple) {
+      if (rows.length === 0) return undefined;
+      const first = rows[0] as Record<string, unknown>;
+      const key = Object.keys(first)[0];
+      return key !== undefined ? first[key] : undefined;
+    }
+    return rows;
+  }
+
+  /**
+   * Serialize the entire database to a Uint8Array. Can be reloaded later
+   * via BunQL.deserialize() or Database.deserialize().
+   */
+  serialize(): Uint8Array {
+    this.#ensureOpen();
+    return (this.#db as unknown as { serialize(): Uint8Array }).serialize();
+  }
+
+  /**
+   * Create a new BunQL instance from a serialized database buffer.
+   */
+  static deserialize(contents: Uint8Array, options?: BunQLOptions): BunQL {
+    const db = (Database as unknown as { deserialize(buf: Uint8Array): Database }).deserialize(contents);
+    const instance = Object.create(BunQL.prototype) as BunQL;
+    (instance as unknown as { initFromDb: (db: Database, opts?: BunQLOptions) => void }).initFromDb(db, options);
+    return instance;
+  }
+
+  private initFromDb(db: Database, options?: BunQLOptions): void {
+    const config = this.#resolveConfig(options);
+    this.#config = config;
+    this.#logger = config.logger;
+    this.#metricsEnabled = config.metricsEnabled;
+    this.#queryTimeoutMs = config.queryTimeoutMs;
+    this.#extractColumns = config.extractColumns;
+
+    if (typeof config.verbose === "function") {
+      this.#verbose = config.verbose;
+    } else if (config.verbose === true) {
+      this.#verbose = (sql: string) => this.#log("debug", sql);
+    }
+
+    this.#db = db;
+    this.#pageSize = 4096;
+    this.#writeQueue = new WriteQueue();
+    this.#retryPolicy = new RetryPolicy(config.retry);
+    this.#statementCache = new StatementCache(this.#db);
+    this.#transactionManager = new TransactionManager(
+      this.#db,
+      this.#writeQueue,
+      config.hooks,
+      this.#logger,
+    );
+    this.#fts5 = new FTS5Helper(this.#db);
+    this.#setupEventHandlers(config.events);
+  }
+
   query<T = Record<string, unknown>>(sql: string, params?: SQLQueryBindings[]): QueryResult<T> {
     this.#ensureOpen();
+    this.#verboseLog(sql);
 
     if (this.#metricsEnabled) this.#metrics.reads.total++;
     const start = this.#metricsEnabled ? performance.now() : 0;
@@ -248,12 +345,9 @@ export class BunQL {
     return { rows, columns, durationMs };
   }
 
-  /**
-   * Read query — fast path. No reader pool, no timeout guard.
-   * Columns extraction skipped unless `extractColumns: true`.
-   */
   querySync<T = Record<string, unknown>>(sql: string, params?: SQLQueryBindings[]): QueryResult<T> {
     this.#ensureOpen();
+    this.#verboseLog(sql);
     const start = this.#metricsEnabled ? performance.now() : 0;
     const stmt = this.#statementCache.get(sql);
     const rows = stmt.all(...(params ?? [])) as T[];
@@ -264,13 +358,9 @@ export class BunQL {
     return { rows, columns, durationMs };
   }
 
-  /**
-   * Write query. Synchronous — direct to bun:sqlite via statement cache.
-   * No WriteQueue, no retry, no hooks. Zero overhead by default.
-   * Sets metricsEnabled: true to enable timing and counter tracking.
-   */
   run(sql: string, params?: SQLQueryBindings[]): RunResult {
     this.#ensureOpen();
+    this.#verboseLog(sql);
     if (this.#metricsEnabled) this.#metrics.writes.total++;
     const start = this.#metricsEnabled ? performance.now() : 0;
     const stmt = this.#statementCache.get(sql);
@@ -288,9 +378,11 @@ export class BunQL {
 
   async transaction<T>(
     callback: (tx: TransactionContext) => Promise<T>,
+    mode?: TransactionMode,
   ): Promise<T> {
     this.#ensureOpen();
-    const result = await this.#transactionManager.transaction(callback);
+    const txMode = mode ?? this.#config.transactionMode;
+    const result = await this.#transactionManager.transaction(callback, txMode);
     return result;
   }
 
@@ -298,29 +390,7 @@ export class BunQL {
     sql: string,
   ): Statement<T, P> {
     this.#ensureOpen();
-
-    const stmt = this.#statementCache.get(sql);
-
-    return {
-      all: (...params: P): T[] => {
-        return stmt.all(...params) as T[];
-      },
-      get: (...params: P): T | undefined => {
-        return stmt.get(...params) as T | undefined;
-      },
-      run: (...params: P): RunResult => {
-        const start = this.#metricsEnabled ? performance.now() : 0;
-        const result = stmt.run(...params);
-        return {
-          changes: result.changes,
-          lastInsertRowid: result.lastInsertRowid,
-          durationMs: this.#metricsEnabled ? performance.now() - start : 0,
-        };
-      },
-      finalize: () => {
-        this.#statementCache.remove(sql);
-      },
-    };
+    return this.#createStatementWrapper<T, P>(sql, this.#statementCache);
   }
 
   async batch(operations: BatchOperation[]): Promise<RunResult[]> {
@@ -453,6 +523,195 @@ export class BunQL {
     }
   }
 
+  #createStatementWrapper<T, P extends SQLQueryBindings[]>(
+    sql: string,
+    cache: StatementCache,
+  ): Statement<T, P> {
+    const native: BunStatement = cache.get(sql);
+    const internals: StmtInternals = {
+      raw: false,
+      pluck: false,
+      safeInts: this.#config.safeIntegers,
+      bound: null,
+    };
+
+    const applyParams = (params?: SQLQueryBindings[]): unknown[] => {
+      if (!params || params.length === 0) {
+        return internals.bound ?? [];
+      }
+      return params;
+    };
+
+    const transformRow = <R>(row: unknown): R => {
+      if (internals.pluck) {
+        if (Array.isArray(row)) return (row as unknown[])[0] as R;
+        return (Object.values(row as Record<string, unknown>))[0] as R;
+      }
+      return row as R;
+    };
+
+    const getReader = (): boolean => {
+      const trimmed = sql.trimStart().toUpperCase();
+      return trimmed.startsWith("SELECT") || trimmed.startsWith("WITH") || trimmed.startsWith("PRAGMA");
+    };
+
+    const stmt: Statement<T, P> = {
+      all: (...params: P): T[] => {
+        this.#verboseLog(sql);
+        const effective = applyParams(params as unknown as SQLQueryBindings[]);
+        if (internals.raw) {
+          const rows = native.values(...effective) as unknown[][];
+          if (internals.pluck) return rows.map((r) => (r.length > 0 ? r[0] : undefined)) as T[];
+          return rows as T[];
+        }
+        const rows = native.all(...effective) as unknown[];
+        return rows.map((r) => transformRow<T>(r));
+      },
+
+      get: (...params: P): T | undefined => {
+        this.#verboseLog(sql);
+        const effective = applyParams(params as unknown as SQLQueryBindings[]);
+        if (internals.raw) {
+          const rows = native.values(...effective) as unknown[][];
+          if (rows.length === 0) return undefined;
+          const first = rows[0] as unknown[];
+          if (internals.pluck) return (first.length > 0 ? first[0] : undefined) as T;
+          return first as T;
+        }
+        const row = native.get(...effective) as unknown;
+        if (row === undefined || row === null) return undefined;
+        return transformRow<T>(row);
+      },
+
+      run: (...params: P): RunResult => {
+        this.#verboseLog(sql);
+        const effective = applyParams(params as unknown as SQLQueryBindings[]);
+        const start = this.#metricsEnabled ? performance.now() : 0;
+        const result = native.run(...effective);
+        return {
+          changes: result.changes,
+          lastInsertRowid: result.lastInsertRowid,
+          durationMs: this.#metricsEnabled ? performance.now() - start : 0,
+        };
+      },
+
+      values: (...params: P): unknown[][] => {
+        this.#verboseLog(sql);
+        const effective = applyParams(params as unknown as SQLQueryBindings[]);
+        return native.values(...effective);
+      },
+
+      iterate: (...params: P): IterableIterator<T> => {
+        this.#verboseLog(sql);
+        const effective = applyParams(params as unknown as SQLQueryBindings[]);
+        const useValues = internals.raw;
+        const nativeIter = (native as unknown as { iterate?(...p: unknown[]): IterableIterator<unknown> }).iterate;
+        const iter = (useValues || !nativeIter)
+          ? native.values(...effective)[Symbol.iterator]()
+          : nativeIter.call(native, ...effective);
+        return {
+          [Symbol.iterator](): IterableIterator<T> {
+            return this;
+          },
+          next(): IteratorResult<T> {
+            const { value, done } = iter.next();
+            if (done) return { value: undefined as unknown as T, done: true };
+            if (internals.raw) {
+              if (internals.pluck) return { value: (Array.isArray(value) && (value as unknown[]).length > 0 ? (value as unknown[])[0] : undefined) as T, done: false };
+              return { value: value as T, done: false };
+            }
+            return { value: transformRow<T>(value), done: false };
+          },
+        } as IterableIterator<T>;
+      },
+
+      finalize: (): void => {
+        cache.remove(sql);
+      },
+
+      raw: (toggle?: boolean): Statement<unknown[], P> => {
+        internals.raw = toggle !== false;
+        if (internals.raw) internals.pluck = false;
+        return stmt as unknown as Statement<unknown[], P>;
+      },
+
+      pluck: (toggle?: boolean): Statement<unknown, P> => {
+        internals.pluck = toggle !== false;
+        if (internals.pluck) internals.raw = false;
+        return stmt as unknown as Statement<unknown, P>;
+      },
+
+      columns: (): ColumnInfo[] => {
+        return native.columnNames.map((name) => ({
+          name,
+          column: null,
+          table: null,
+          database: null,
+          type: null,
+        }));
+      },
+
+      bind: (...params: P): Statement<T, P> => {
+        internals.bound = params as unknown as SQLQueryBindings[];
+        return stmt;
+      },
+
+      safeIntegers: (toggle?: boolean): Statement<T, P> => {
+        internals.safeInts = toggle !== false;
+        return stmt;
+      },
+
+      as: <U>(Class: new (...args: unknown[]) => U): Statement<U, P> => {
+        const base = stmt as unknown as Statement<unknown, P>;
+        const mapRow = (r: unknown): U => Object.assign(Object.create(Class.prototype), r) as U;
+        const wrapped: Statement<U, P> = {
+          all: (...params: P): U[] => {
+            const rows = base.all(...params);
+            return rows.map((r) => mapRow(r));
+          },
+          get: (...params: P): U | undefined => {
+            const row = base.get(...params);
+            if (row === undefined || row === null) return undefined;
+            return mapRow(row);
+          },
+          run: base.run,
+          values: base.values,
+          iterate(...params: P): IterableIterator<U> {
+            const iter = base.iterate(...params);
+            return {
+              [Symbol.iterator]() { return this; },
+              next(): IteratorResult<U> {
+                const { value, done } = iter.next();
+                if (done) return { value: undefined as unknown as U, done: true };
+                return { value: mapRow(value), done: false };
+              },
+            };
+          },
+          finalize: base.finalize,
+          raw: ((toggle?: boolean) => base.raw(toggle)) as unknown as Statement<U, P>["raw"],
+          pluck: ((toggle?: boolean) => base.pluck(toggle)) as unknown as Statement<U, P>["pluck"],
+          columns: base.columns,
+          bind: ((...params: P) => base.bind(...params)) as unknown as Statement<U, P>["bind"],
+          safeIntegers: ((toggle?: boolean) => base.safeIntegers(toggle)) as unknown as Statement<U, P>["safeIntegers"],
+          as: (<V>(C: new (...args: unknown[]) => V) => base.as(C)) as unknown as Statement<U, P>["as"],
+          get source() { return base.source; },
+          get reader() { return base.reader; },
+        };
+        return wrapped;
+      },
+
+      get source(): string {
+        return native.toString();
+      },
+
+      get reader(): boolean {
+        return getReader();
+      },
+    };
+
+    return stmt;
+  }
+
   #validateBackupPath(path: string): void {
     if (!path || path.length === 0) {
       throw new Error("Backup path must not be empty.");
@@ -538,6 +797,7 @@ export class BunQL {
       synchronous: options?.synchronous ?? "NORMAL",
       cacheSize: options?.cacheSize ?? -2000,
       foreignKeys: options?.foreignKeys ?? true,
+      safeIntegers: options?.safeIntegers ?? false,
       retry,
       readerPoolSize,
       maintenance: options?.maintenance,
@@ -546,6 +806,8 @@ export class BunQL {
       queryTimeoutMs: options?.queryTimeoutMs ?? 0,
       extractColumns: options?.extractColumns ?? false,
       autoVacuum: options?.pragma?.autoVacuum ?? "NONE",
+      verbose: options?.verbose ?? null,
+      transactionMode: options?.transactionMode ?? "immediate",
       logger: options?.logger,
       hooks: options?.hooks,
       events: options?.events,
@@ -625,8 +887,32 @@ export class BunQL {
   #log(level: "debug" | "warn" | "info" | "error", message: string): void {
     this.#logger?.[level]?.(`[BunQL] ${message}`);
   }
+
+  #verboseLog(sql: string): void {
+    this.#verbose?.(sql);
+  }
 }
 
 export type { TransactionContext } from "./transaction-manager.ts";
-export type { BunQLOptions, RetryConfig, QueryResult, RunResult, Statement, BatchOperation, BunQLMetrics, CacheStats, CheckpointMode, CheckpointResult, WalStatus, BackupResult, VacuumResult, FTS5Options, FTSResult, MaintenanceConfig } from "./types/index.ts";
+export type {
+  BunQLOptions,
+  RetryConfig,
+  QueryResult,
+  RunResult,
+  Statement,
+  ColumnInfo,
+  BatchOperation,
+  BunQLMetrics,
+  CacheStats,
+  CheckpointMode,
+  CheckpointResult,
+  WalStatus,
+  BackupResult,
+  VacuumResult,
+  FTS5Options,
+  FTSResult,
+  MaintenanceConfig,
+  TransactionMode,
+  PragmaOptions,
+} from "./types/index.ts";
 export type { ServerOptions } from "./types/result.ts";

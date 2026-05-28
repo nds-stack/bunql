@@ -3,14 +3,19 @@
  * @description Serialized transaction execution with SAVEPOINT nesting support.
  */
 import type { Database, SQLQueryBindings, Statement as BunStatement } from "bun:sqlite";
-import type { RunResult, Statement } from "./types/result.ts";
-import type { BunQLHooks, Logger, BatchOperation } from "./types/options.ts";
+import type { RunResult } from "./types/result.ts";
+import type { BunQLHooks, Logger, BatchOperation, TransactionMode } from "./types/options.ts";
 import { WriteQueue } from "./write-queue.ts";
 
 export interface TransactionContext {
   run(sql: string, params?: SQLQueryBindings[]): RunResult;
   query<T = unknown>(sql: string, params?: SQLQueryBindings[]): T[];
-  prepare<T = unknown, P extends SQLQueryBindings[] = SQLQueryBindings[]>(sql: string): Statement<T, P>;
+  prepare<T = unknown, P extends SQLQueryBindings[] = SQLQueryBindings[]>(sql: string): {
+    all(...params: P): T[];
+    get(...params: P): T | undefined;
+    run(...params: P): RunResult;
+    finalize(): void;
+  };
   batch(operations: BatchOperation[]): RunResult[];
 }
 
@@ -34,6 +39,10 @@ export class TransactionManager {
     return { committed: this.#committed, rolledBack: this.#rolledBack };
   }
 
+  get depth(): number {
+    return this.#depth;
+  }
+
   constructor(
     db: Database,
     writeQueue: WriteQueue,
@@ -48,6 +57,7 @@ export class TransactionManager {
 
   async transaction<T>(
     callback: (tx: TransactionContext) => Promise<T>,
+    mode: TransactionMode = "immediate",
   ): Promise<T> {
     if (this.#processing && this.#depth > 0) {
       return this.#nestedTransaction(callback);
@@ -58,13 +68,17 @@ export class TransactionManager {
       this.#depth++;
       const startTime = performance.now();
       const stmtCache = new Map<string, BunStatement>();
-      // eslint-disable-next-line no-useless-assignment
       let began = false;
       try {
         this.#hooks?.beforeTransaction?.();
-        this.#log("debug", "Beginning transaction");
+        this.#log("debug", `Beginning transaction (${mode})`);
 
-        this.#db.run("BEGIN IMMEDIATE");
+        const beginSQL = mode === "deferred"
+          ? "BEGIN DEFERRED"
+          : mode === "exclusive"
+            ? "BEGIN EXCLUSIVE"
+            : "BEGIN IMMEDIATE";
+        this.#db.run(beginSQL);
         began = true;
 
         const ctx = this.#createContext(stmtCache);
@@ -158,7 +172,7 @@ export class TransactionManager {
       return stmt.all(...(params ?? [])) as T[];
     };
 
-    const executePrepare = <T, P extends SQLQueryBindings[]>(sql: string): Statement<T, P> => {
+    const executePrepare = <T, P extends SQLQueryBindings[]>(sql: string) => {
       const stmt = getOrPrepare(sql);
       return {
         all: (...params: P): T[] => stmt.all(...params) as T[],
@@ -196,7 +210,7 @@ export class TransactionManager {
         return executeRun(sql, params);
       },
       query: <T>(sql: string, params?: SQLQueryBindings[]): T[] => executeQuery<T>(sql, params),
-      prepare: <T, P extends SQLQueryBindings[]>(sql: string): Statement<T, P> => executePrepare<T, P>(sql),
+      prepare: <T, P extends SQLQueryBindings[]>(sql: string) => executePrepare<T, P>(sql),
       batch: (operations: BatchOperation[]): RunResult[] => executeBatch(operations),
     };
   }

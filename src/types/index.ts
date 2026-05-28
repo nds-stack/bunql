@@ -12,12 +12,15 @@ export type {
   BunQLConfig,
   MaintenanceConfig,
   FTS5Options,
+  TransactionMode,
+  PragmaOptions,
 } from "./options.ts";
 
 export type {
   QueryResult,
   RunResult,
   Statement,
+  ColumnInfo,
   BunQLMetrics,
   CacheStats,
   CheckpointMode,

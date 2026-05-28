@@ -9,6 +9,7 @@ export type {
   QueryResult,
   RunResult,
   Statement,
+  ColumnInfo,
   BatchOperation,
   TransactionContext,
   BunQLMetrics,
@@ -21,6 +22,8 @@ export type {
   FTS5Options,
   FTSResult,
   MaintenanceConfig,
+  TransactionMode,
+  PragmaOptions,
 } from "./bunql.ts";
 export type { ServerOptions } from "./types/result.ts";
 

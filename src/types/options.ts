@@ -50,6 +50,7 @@ export interface BunQLOptions {
   synchronous?: "OFF" | "NORMAL" | "FULL" | "EXTRA";
   cacheSize?: number;
   foreignKeys?: boolean;
+  safeIntegers?: boolean;
   retry?: RetryConfig;
   logger?: Logger;
   hooks?: BunQLHooks;
@@ -57,6 +58,10 @@ export interface BunQLOptions {
   readerPool?: number;
   maintenance?: MaintenanceConfig;
   slowQueryThreshold?: number;
+  /** Log every SQL statement executed. true = console.debug, function = custom handler. */
+  verbose?: boolean | ((sql: string) => void);
+  /** Default transaction mode. Default: "immediate". */
+  transactionMode?: TransactionMode;
 /** Skip all performance.now() calls and counter increments. Default: false (zero overhead). */
   metricsEnabled?: boolean;
   /** Interrupt queries exceeding this duration in ms. 0 = disabled. */
@@ -90,6 +95,12 @@ export interface EventHandlers {
   onSlowQuery?: (sql: string, durationMs: number) => void;
 }
 
+export type TransactionMode = "deferred" | "immediate" | "exclusive";
+
+export interface PragmaOptions {
+  simple?: boolean;
+}
+
 export interface BunQLConfig {
   wal: boolean;
   readonly: boolean;
@@ -97,6 +108,7 @@ export interface BunQLConfig {
   synchronous: "OFF" | "NORMAL" | "FULL" | "EXTRA";
   cacheSize: number;
   foreignKeys: boolean;
+  safeIntegers: boolean;
   retry: Required<RetryConfig>;
   readerPoolSize: number;
   maintenance?: MaintenanceConfig;
@@ -105,6 +117,8 @@ export interface BunQLConfig {
   queryTimeoutMs: number;
   extractColumns: boolean;
   autoVacuum: "NONE" | "FULL" | "INCREMENTAL";
+  verbose: boolean | ((sql: string) => void) | null;
+  transactionMode: TransactionMode;
   logger?: Logger;
   hooks?: BunQLHooks;
   events?: EventHandlers;
