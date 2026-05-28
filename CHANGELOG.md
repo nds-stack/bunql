@@ -2,16 +2,60 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-28
+
+### Added
+- **Statement format control** — full better-sqlite3 parity on prepared statements:
+  - `.raw(toggle?)` — return rows as arrays (`values()` internally). Mutually exclusive with `.pluck()`.
+  - `.pluck(toggle?)` — return first column value only. Mutually exclusive with `.raw()`.
+  - `.columns()` — column metadata (`ColumnInfo[]` with `name`, `column`, `table`, `database`, `type`).
+  - `.bind(...params)` — permanent parameter binding. Overridden by call-site params.
+  - `.iterate(...params)` — lazy row-by-row iterator (delegates to `bun:sqlite` native `.iterate()`).
+  - `.values(...params)` — returns raw `unknown[][]` (delegates to `bun:sqlite` native `.values()`).
+  - `.safeIntegers(toggle?)` — per-statement `BigInt` passthrough.
+  - `.as(Class)` — map rows to class instances (prototype assignment, no constructor call).
+  - `.source` — read-only SQL string property.
+  - `.reader` — read-only boolean (true for SELECT/WITH/PRAGMA).
+- **`db.pragma(source, options?)`** — convenience PRAGMA query method. `{ simple: true }` returns scalar (first column of first row). Auto-prefixes `PRAGMA` keyword.
+- **Transaction modes** — `transaction(callback, mode)` where `mode` is `"deferred" | "immediate" | "exclusive"`. Default via `transactionMode` config option.
+- **`db.serialize()`** — serialize entire database to `Uint8Array` (delegates to `bun:sqlite` native).
+- **`BunQL.deserialize(contents, options?)`** — create instance from serialized buffer.
+- **Database properties** — `db.name`, `db.memory`, `db.readonly`, `db.inTransaction` getters.
+- **`safeIntegers` option** — passthrough to `bun:sqlite` for `BigInt` support on `INTEGER` columns.
+- **`verbose` option** — `true` logs every SQL via logger, or custom `(sql: string) => void` callback.
+- **`ColumnInfo` type** — exported alongside `Statement<T, P>`.
+
+### Changed
+- `Statement<T, P>` interface expanded from 4 methods to 15 methods + 2 readonly properties.
+- `TransactionContext` now uses simpler inline statement type (avoids full `Statement` interface overhead in transactions).
+- `#createContext` extracted from `TransactionManager` to `src/transaction-context.ts` (cleaner SRP).
+- `TransactionManager` exposes `depth` getter (used by `db.inTransaction`).
+
+### Fixed
+- `bind()` parameter precedence: call-site params now correctly override permanently bound params.
+- `iterate()` with `raw()` mode now uses `.values()` internally instead of `.iterate()` (ensures array output).
+- `get()` with `raw()` mode: fixed `Object is possibly 'undefined'` on first row access.
+- README: ServerOptions example corrected (`secret` → `auth.apiKey`).
+- README: `.npmignore` now includes `context7.json` exclusion.
+- `.gitignore`: removed dangling `# Environment.env` comment.
+- `http-handler.ts`: removed unnecessary `await` on sync `tx.run()`.
+
+### Internal
+- Bundle size: 42.4KB core (+8KB for new Statement features), 5.1KB server (unchanged).
+- Tests: 138 (was 109).
+- Modules: 16 bundled (was 15) — new `transaction-context.ts` module.
+
 ## [0.2.0] - 2026-05-28
 
 ### Changed (BREAKING)
 - **`run()` is now synchronous** — returns `RunResult`, not `Promise<RunResult>`. No WriteQueue, no retry, no hooks in write path. `await db.run()` → `db.run()`.
 - **`Statement.run()` is now synchronous** — same as above. `await stmt.run()` → `stmt.run()`.
 - **`TransactionContext.run()` / `.batch()` are now synchronous**
-- **Removed `runSync()` / `querySync()`** — merged into `run()` / `query()` (both are now sync)
-- **Removed `beforeWrite` / `afterWrite` hooks** — sync writes don't need queue hooks
-- **Removed `onBusy` / `onDrain` from write path** — no queue = no drain, no retry = no busy
-- **`metrics.writes.failed` no longer incremented** — sync writes throw directly
+- **`querySync()` moved to direct Statement Cache path** — no reader pool, no timeout guard. Renamed internally; public `querySync()` still available as fast-path.
+- **`beforeWrite` / `afterWrite` hooks no longer called by `run()`** — still functional inside `batch()` operations
+- **Removed `runSync()`** — merged into `run()` (now sync)
+- **`onBusy` / `onDrain` only fire for queue-based operations** — not from individual writes
+- **`metrics.writes.failed` no longer incremented for sync writes** — sync writes throw directly
 - **Repositioned as ergonomic wrapper** — not a "concurrent write safety" layer
 
 ### Internal

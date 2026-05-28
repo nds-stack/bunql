@@ -18,9 +18,19 @@
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Examples](#examples)
+  - [Statement Format Control](#statement-format-control)
+  - [Permanent Parameter Binding](#permanent-parameter-binding)
+  - [Lazy Iteration + Class Mapping](#lazy-iteration--class-mapping)
+  - [Verbose SQL Logging](#verbose-sql-logging)
+  - [PRAGMA Convenience](#pragma-convenience)
+  - [Transaction Modes](#transaction-modes)
   - [Exec (Multi-Statement SQL)](#exec-multi-statement-sql)
   - [Batch Inside Transaction](#batch-inside-transaction)
   - [Raw Database Access](#raw-database-access)
+  - [Reader Pool (Parallel Reads)](#reader-pool-parallel-reads)
+  - [FTS5 Full-Text Search](#fts5-full-text-search)
+  - [Maintenance & Auto-Scheduling](#maintenance--auto-scheduling)
+  - [Database Serialization](#database-serialization)
 - [API](#api)
 - [Architecture](#architecture)
 - [Compared to Raw bun:sqlite](#compared-to-raw-bunsqlite)
@@ -42,13 +52,16 @@
 
 | Raw `bun:sqlite` | bunql |
 |---|---|
-| Manual `BEGIN/COMMIT/ROLLBACK` | `db.transaction(cb)` — auto-rollback, SAVEPOINT nesting |
+| Manual `BEGIN/COMMIT/ROLLBACK` | `db.transaction(cb)` — auto-rollback, SAVEPOINT nesting, 3 modes |
 | Manual statement lifecycle | LRU cache (100), auto-finalize on close |
 | Manual cleanup on shutdown | `db.close()` — drain pending ops, finalize cache |
 | No built-in observability | `db.metrics`, `db.cacheStats`, slow query logging |
 | No reader pool for WAL | `readerPool: N` — round-robin parallel reads |
 | PRAGMA setup manual | Auto-configure WAL, sync=NORMAL, FK=ON, cache |
 | FTS5 API manual | `db.fts.search()`, insert, optimize, rebuild |
+| No format control on results | `.raw()`, `.pluck()`, `.iterate()`, `.as()` — chainable transforms |
+| Manual PRAGMA loops | `db.pragma("key", { simple: true })` — one-liner |
+| Raw SQLite errors | Typed `BunQLError` hierarchy with `.cause` chains |
 
 ```typescript
 const db = new BunQL("./app.db");
@@ -72,16 +85,19 @@ await db.transaction(async (tx) => {
 
 - **Minimal abstraction** — A thin, transparent layer over `bun:sqlite`. No magic. No ORM.
 - **Zero overhead writes** — `run()` is synchronous, direct to `bun:sqlite`. No queue, no retry, no Promise.
-- **Production-first** — Transaction safety (auto-rollback, SAVEPOINT). Error chains preserved (`error.cause`).
+- **Statement format control** — `.raw()`, `.pluck()`, `.as()`, `.bind()`, `.iterate()` — full better-sqlite3 parity.
+- **Production-first** — Transaction safety (auto-rollback, SAVEPOINT, 3 lock modes). Error chains preserved (`error.cause`).
 - **Bun-native** — Uses `bun:sqlite`, `Bun.sleep()`, `Bun.file()`. No Node.js polyfills.
-- **Observability built-in** — Real-time metrics, statement cache stats, slow query logging.
+- **Observability built-in** — Real-time metrics, statement cache stats, slow query logging, verbose SQL tracing.
 
 ---
 
 ## When to Use
 
-- You need SQLite with a clean API for writes, transactions, and FTS5.
-- You want serialized transactions without manual retry logic.
+- You need SQLite with a clean API for writes, transactions, FTS5, and statement format control.
+- You want `.raw()` / `.pluck()` / `.iterate()` / `.as()` on prepared statements — better-sqlite3 parity.
+- You want serialized transactions without manual retry logic, with 3 lock modes.
+- You want `db.pragma()` convenience, `db.serialize()`, slow query detection, verbose tracing.
 - You want a lightweight alternative to heavier database wrappers.
 - You need embedded storage for a Bun service, CLI tool, or single-process server.
 
@@ -339,6 +355,94 @@ const result = await db.vacuum({ incremental: true, pagesPerStep: 100 });
 console.log(`Reclaimed ${result.pagesReclaimed} pages`);
 ```
 
+### Statement Format Control
+
+Raw mode (arrays instead of objects) and pluck mode (first column only):
+
+```typescript
+import { BunQL } from "@nds-stack/bunql";
+
+const db = new BunQL(":memory:");
+db.run("CREATE TABLE users (id INTEGER, name TEXT)");
+db.run("INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')");
+
+// raw() — returns arrays instead of objects
+const rows = db.prepare("SELECT * FROM users ORDER BY id").raw().all();
+// → [[1, "Alice"], [2, "Bob"]]
+
+// pluck() — returns first column value only
+const ids = db.prepare("SELECT id FROM users ORDER BY id").pluck().all();
+// → [1, 2]
+```
+
+### Permanent Parameter Binding
+
+```typescript
+const stmt = db.prepare<{ name: string }>("SELECT name FROM users WHERE id = ?");
+stmt.bind(1);
+const alice = stmt.get();  // uses bound value → { name: "Alice" }
+const bob = stmt.get(2);   // overrides bound value → { name: "Bob" }
+```
+
+### Lazy Iteration + Class Mapping
+
+```typescript
+// iterate() yields rows one by one — memory-efficient for large results
+for (const row of db.prepare("SELECT * FROM users").iterate()) {
+  console.log(row);
+}
+
+// as() maps rows to class instances (prototype assignment)
+class User {
+  id!: number;
+  name!: string;
+  get displayName() { return `User: ${this.name}`; }
+}
+const user = db.prepare("SELECT * FROM users WHERE id = 1").as(User).get();
+console.log(user?.displayName);  // → "User: Alice"
+```
+
+### Verbose SQL Logging
+
+```typescript
+// true — logs every SQL via the logger (debug level)
+const db1 = new BunQL("./app.db", { verbose: true });
+
+// custom callback
+const sqls: string[] = [];
+const db2 = new BunQL("./app.db", { verbose: (sql) => sqls.push(sql) });
+```
+
+### PRAGMA Convenience
+
+```typescript
+// Structured rows
+const ver = db.pragma("user_version");       // → [{ user_version: 0 }]
+
+// Scalar with { simple: true }
+const pz = db.pragma("page_size", { simple: true });  // → 4096
+```
+
+### Transaction Modes
+
+```typescript
+// Default: "immediate" (configurable via `transactionMode` option)
+await db.transaction(async (tx) => {
+  tx.run("INSERT INTO users VALUES (3, 'Charlie')");
+});
+
+// Explicit mode: deferred | immediate | exclusive
+await db.transaction(async (tx) => { /* ... */ }, "exclusive");
+await db.transaction(async (tx) => { /* ... */ }, "deferred");
+```
+
+### Database Serialization
+
+```typescript
+const buf = db.serialize();          // → Uint8Array
+const db2 = BunQL.deserialize(buf);  // → new BunQL instance
+```
+
 ---
 
 ## API
@@ -360,6 +464,9 @@ new BunQL(path: string, options?: BunQLOptions)
 | `cacheSize` | `number` | `-2000` | Page cache size (negative = KB, -2000 = 2MB) |
 | `foreignKeys` | `boolean` | `true` | Enforce FOREIGN KEY constraints |
 | `retry` | `RetryConfig` | — | Retry policy for SQLITE_BUSY (transaction/batch/exec/backup/vacuum only — `run()` bypasses retry) |
+| `safeIntegers` | `boolean` | `false` | Passthrough to `bun:sqlite`. Returns `INTEGER` columns as `BigInt` instead of `number`. |
+| `verbose` | `boolean \| (sql: string) => void` | `false` | Log every SQL statement. `true` = via logger, function = custom callback. |
+| `transactionMode` | `TransactionMode` | `"immediate"` | Default transaction start: `"deferred"` \| `"immediate"` \| `"exclusive"`. |
 | `readerPool` | `number` | `0` | Number of read-only connections for parallel reads (`0` = disabled) |
 | `maintenance` | `MaintenanceConfig` | — | Auto-scheduler for checkpoint, vacuum, backup, integrity check |
 | `slowQueryThreshold` | `number` | `0` | Slow query threshold in ms (`0` = disabled). Triggers `onSlowQuery` event |
@@ -385,7 +492,9 @@ new BunQL(path: string, options?: BunQLOptions)
 | `querySync(sql, params?)` | `QueryResult<T>` | Synchronous read (fast path). No reader pool. |
 | `run(sql, params?)` | `RunResult` | Write query. Synchronous — direct `stmt.run()`. |
 | `transaction(callback)` | `Promise<T>` | Serialized transaction. Auto-rollback on error. |
-| `prepare(sql)` | `Statement<T, P>` | Cached prepared statement. `.run()` is sync. |
+| `prepare(sql)` | `Statement<T, P>` | Cached prepared statement. See [Statement API](#statement-api) for full method list. |
+| `pragma(source, opts?)` | `unknown` | PRAGMA query convenience. `{ simple: true }` returns first column of first row. |
+| `serialize()` | `Uint8Array` | Serialize entire DB to bytes. Reload via `BunQL.deserialize()`. |
 | `batch(operations)` | `Promise<RunResult[]>` | Atomic multi-write transaction. |
 | `exec(sql)` | `Promise<void>` | Multi-statement SQL (schema files, migrations). Serialized via queue. |
 | `walStatus()` | `Promise<WalStatus>` | WAL file size, page info, checkpoint requirement. |
@@ -395,29 +504,74 @@ new BunQL(path: string, options?: BunQLOptions)
 | `fts` | `FTS5Helper` | Getter — FTS5 search helper (create, search, insert, delete, update, rebuild, merge, optimize, drop). |
 | `metrics` | `BunQLMetrics` | Getter — real-time operation counters (writes, reads, txs, queue). |
 | `cacheStats` | `CacheStats` | Getter — statement cache hit/miss/size/rate. |
+| `name` | `string` | Getter — database filename or `":memory:"`. |
+| `memory` | `boolean` | Getter — true if database is in-memory. |
+| `readonly` | `boolean` | Getter — true if opened with `readonly: true`. |
+| `inTransaction` | `boolean` | Getter — true if currently inside an active transaction. |
 | `vacuum(opts?)` | `Promise<VacuumResult>` | Full or incremental vacuum. Returns reclaimed pages count. |
 | `close()` | `Promise<void>` | Graceful shutdown. Drains queue, finalizes statements, closes DB. |
+
+### Static Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `BunQL.deserialize(buf, opts?)` | `BunQL` | Create a new BunQL instance from a serialized database buffer. |
 
 ### Result Types
 
 ```typescript
 interface QueryResult<T> {
-  rows: T[];          // Result rows
-  columns: string[];  // Column names
-  durationMs: number; // Query execution time (ms)
+  rows: T[];
+  columns: string[];       // empty array unless extractColumns: true
+  durationMs: number;       // 0 unless metricsEnabled: true
 }
 
 interface RunResult {
-  changes: number;              // Rows modified
-  lastInsertRowid: number | bigint | null;  // Last inserted row ID
-  durationMs: number;           // Execution time (ms)
+  changes: number;
+  lastInsertRowid: number | bigint | null;
+  durationMs: number;       // 0 unless metricsEnabled: true
 }
 
+interface ColumnInfo {
+  name: string;             // column alias or name
+  column: string | null;    // originating column (null for expressions)
+  table: string | null;     // originating table (null for expressions)
+  database: string | null;  // originating database (null for expressions)
+  type: string | null;      // declared type from schema
+}
+```
+
+### Statement API
+
+```typescript
 interface Statement<T, P extends unknown[]> {
+  // Execution
   all(...params: P): T[];
   get(...params: P): T | undefined;
   run(...params: P): RunResult;
+  values(...params: P): unknown[][];
+  iterate(...params: P): IterableIterator<T>;
   finalize(): void;
+
+  // Format control (chainable — mutually exclusive raw/pluck)
+  raw(toggle?: boolean): Statement<unknown[], P>;
+  pluck(toggle?: boolean): Statement<unknown, P>;
+
+  // Metadata
+  columns(): ColumnInfo[];
+
+  // Parameter binding
+  bind(...params: P): Statement<T, P>;
+
+  // Integer handling
+  safeIntegers(toggle?: boolean): Statement<T, P>;
+
+  // Class mapping
+  as<U>(Class: new (...args: unknown[]) => U): Statement<U, P>;
+
+  // Properties
+  readonly source: string;   // original SQL text
+  readonly reader: boolean;  // true for SELECT / WITH / PRAGMA
 }
 
 interface BunQLMetrics {
@@ -580,7 +734,7 @@ db.run(sql, params)
 `transaction()`, `batch()`, `exec()` go through **WriteQueue** — the only operations that need serialization:
 
 1. Enter WriteQueue (serialized execution order)
-2. `BEGIN IMMEDIATE` — prevents overlapping transactions
+2. `BEGIN IMMEDIATE` (default; configurable to `DEFERRED` / `EXCLUSIVE` via mode option)
 3. Callback receives `TransactionContext` with `run()` / `query()` / `batch()` / `prepare()`
 4. Success → `COMMIT`. Failure → `ROLLBACK` (original error re-thrown directly, no wrapper)
 5. Nested transactions use SQLite **SAVEPOINT** for isolation
@@ -593,6 +747,7 @@ db.run(sql, params)
 | WAL mode default | Enables concurrent reads during writes. |
 | `run()` is sync | `bun:sqlite` is sync — wrapping with Promise adds overhead for no benefit. |
 | WriteQueue only for tx/batch | Transactions need serialization (BEGIN→COMMIT). Writes don't. |
+| 3 transaction modes | `deferred` / `immediate` / `exclusive` — match SQLite's lock semantics. Default: `immediate`. |
 | Reads bypass queue | Reads execute directly — never blocked by writes. |
 | `raw` getter exposed | Users need escape hatch for PRAGMA kustom, VACUUM, dll. |
 | Original error preserved | Transaction errors re-thrown directly, no wrapper. |
@@ -605,12 +760,15 @@ db.run(sql, params)
 |--------|-------------|-------------------|
 | API surface | Low-level, direct | Same SQL, added convenience |
 | Write path | `stmt.run()` (sync C binding) | `db.run()` (sync, cached statement) |
-| Transactions | Manual BEGIN/COMMIT | Scoped callbacks with auto-rollback + SAVEPOINT |
+| Transactions | Manual BEGIN/COMMIT | Scoped callbacks with auto-rollback + SAVEPOINT + 3 modes |
 | Error handling | Raw SQLite errors | Typed `BunQLError` hierarchy; original errors preserved |
 | Reads | Direct | Cached (LRU, max 100) |
-| Prepared stmts | Manual manage | Auto-cached, reused |
+| Statement format | Objects only | `.raw()` (arrays), `.pluck()` (scalar), `.as()` (class map) |
+| Prepared stmts | Manual manage | Auto-cached, reused + `.bind()` + `.iterate()` |
+| PRAGMA calls | `db.run("PRAGMA key")` | `db.pragma("key", { simple: true })` |
+| Serialization | Manual | `db.serialize()` + `BunQL.deserialize()` |
 | Graceful shutdown | Manual | Drain pending ops + cache finalize |
-| Bundle size | Built-in | +34.4KB core / +5.1KB server |
+| Bundle size | Built-in | +42.4KB core / +5.1KB server |
 
 bunql is not a replacement for `bun:sqlite` — it's an **ergonomic layer** on top. You still write raw SQL. The wrapper handles what `bun:sqlite` leaves bare: transactions, statement lifecycle, observability, graceful shutdown.
 
@@ -667,6 +825,38 @@ const db = new BunQL("./app.db", {
 ### Statement Cache Tuning
 
 The LRU cache holds up to 100 prepared statements. No config knob — the limit is deliberate to prevent unbounded growth. Highly diverse query patterns may trigger evictions; if you consistently see low hit rates in `cacheStats`, consider caching frequently-used queries at the application level.
+
+### Verbose SQL Logging
+
+Log every SQL statement executed — useful for debugging and auditing:
+
+```typescript
+// true — logs via the configured logger at debug level
+const db = new BunQL("./app.db", { verbose: true });
+
+// custom callback
+const db2 = new BunQL("./app.db", {
+  verbose: (sql: string) => console.log("[SQL]", sql),
+});
+```
+
+### Transaction Modes
+
+Control SQLite's lock semantics per transaction:
+
+```typescript
+const db = new BunQL("./app.db", {
+  transactionMode: "immediate",  // default: prevent concurrent writes
+});
+
+// Override per-transaction
+await db.transaction(async (tx) => {
+  // ...
+}, "deferred");   // no lock acquired until first write
+await db.transaction(async (tx) => {
+  // ...
+}, "exclusive");  // exclusive lock on entire database
+```
 
 ---
 
@@ -816,8 +1006,8 @@ Write operations via the `/run` endpoint are synchronous (direct to `bun:sqlite`
 
 ## Stability
 
-- **v0.2.0 (stable)** — BREAKING: sync `run()`, honest architecture — no fake concurrency safety
-- **109 tests** — unit, integration, concurrency, stress, FTS5, reader pool
+- **v0.3.0 (stable)** — BREAKING: expanded Statement API (15 methods), transaction modes, pragma helper
+- **138 tests** — unit, integration, concurrency, stress, FTS5, reader pool, statement features
 - **5000 sequential writes** — verified stable
 - **Graceful shutdown** — drain queue → finalize statements → close DB
 - **Memory safe** — LRU cache eviction, `yocto-queue` linked-list, no unbounded growth
