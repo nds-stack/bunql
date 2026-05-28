@@ -213,16 +213,19 @@ export class BunQL {
     }
 
     let rows: T[];
-    if (this.#readerPool) {
-      const entry = this.#readerPool.next();
-      const stmt = entry.cache.get(sql);
-      rows = stmt.all(...(params ?? [])) as T[];
-    } else {
-      const stmt = this.#statementCache.get(sql);
-      rows = stmt.all(...(params ?? [])) as T[];
+    try {
+      if (this.#readerPool) {
+        const entry = this.#readerPool.next();
+        const stmt = entry.cache.get(sql);
+        rows = stmt.all(...(params ?? [])) as T[];
+      } else {
+        const stmt = this.#statementCache.get(sql);
+        rows = stmt.all(...(params ?? [])) as T[];
+      }
+    } finally {
+      if (timer) clearTimeout(timer);
     }
 
-    if (timer) clearTimeout(timer);
     const durationMs = this.#metricsEnabled ? performance.now() - start : 0;
 
     if (this.#config.slowQueryThreshold > 0 && durationMs > this.#config.slowQueryThreshold) {
