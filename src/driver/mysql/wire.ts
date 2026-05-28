@@ -459,13 +459,13 @@ function parseColumnDefinition(data: Uint8Array): ColumnDefinition {
   const orgTable = readLenEncString(data, off); off += orgTable.bytes;
   const name = readLenEncString(data, off); off += name.bytes;
   const orgName = readLenEncString(data, off); off += orgName.bytes;
-  const v = new DataView(data.buffer, data.byteOffset + data.length);
-  // Skip filler
-  const charset = v.getUint16(data.length - 12, true);
-  const columnLength = v.getUint32(data.length - 8, true);
-  const type = data[data.length - 4]!;
-  const flags = v.getUint16(data.length - 3, true);
-  const decimals = data[data.length - 1]!;
+  // Metadata fields are at fixed positions from end of packet
+  const len = data.length;
+  const charset = (data[len - 12]!) | (data[len - 11]! << 8);
+  const columnLength = (data[len - 10]!) | (data[len - 9]! << 8) | (data[len - 8]! << 16) | (data[len - 7]! << 24);
+  const type = data[len - 4]!;
+  const flags = (data[len - 3]!) | (data[len - 2]! << 8);
+  const decimals = data[len - 1]!;
   return { catalog: catalog.value, schema: schema.value, table: table.value, orgTable: orgTable.value, name: name.value, orgName: orgName.value, charset, columnLength, type, flags, decimals };
 }
 
