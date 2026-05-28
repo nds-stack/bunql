@@ -116,7 +116,11 @@ export class BunQL {
     dbOptions.create = true;
 
     try {
-      this.#db = new Database(path, dbOptions);
+      if (options?.dbInstance) {
+        this.#db = options.dbInstance;
+      } else {
+        this.#db = new Database(path, dbOptions);
+      }
     } catch (error) {
       throw new ConnectionError(
         `Failed to open database: ${path}`,
@@ -124,23 +128,16 @@ export class BunQL {
       );
     }
 
-    if (config.wal && !config.readonly) {
+    if (config.wal && !config.readonly && !options?.dbInstance) {
       this.#db.run("PRAGMA journal_mode=WAL");
     }
 
-    this.#db.run(`PRAGMA synchronous=${config.synchronous}`);
-    this.#db.run(`PRAGMA cache_size=${config.cacheSize}`);
-
-    if (config.foreignKeys) {
-      this.#db.run("PRAGMA foreign_keys=ON");
-    }
-
-    if (config.busyTimeout > 0) {
-      this.#db.run(`PRAGMA busy_timeout=${config.busyTimeout}`);
-    }
-
-    if (config.autoVacuum !== "NONE") {
-      this.#db.run(`PRAGMA auto_vacuum=${config.autoVacuum}`);
+    if (!options?.dbInstance) {
+      this.#db.run(`PRAGMA synchronous=${config.synchronous}`);
+      this.#db.run(`PRAGMA cache_size=${config.cacheSize}`);
+      if (config.foreignKeys) this.#db.run("PRAGMA foreign_keys=ON");
+      if (config.busyTimeout > 0) this.#db.run(`PRAGMA busy_timeout=${config.busyTimeout}`);
+      if (config.autoVacuum !== "NONE") this.#db.run(`PRAGMA auto_vacuum=${config.autoVacuum}`);
     }
 
     this.#pageSize = (this.#db
@@ -274,38 +271,7 @@ export class BunQL {
    */
   static deserialize(contents: Uint8Array, options?: BunQLOptions): BunQL {
     const db = (Database as unknown as { deserialize(buf: Uint8Array): Database }).deserialize(contents);
-    const instance = Object.create(BunQL.prototype) as BunQL;
-    (instance as unknown as { initFromDb: (db: Database, opts?: BunQLOptions) => void }).initFromDb(db, options);
-    return instance;
-  }
-
-  private initFromDb(db: Database, options?: BunQLOptions): void {
-    const config = this.#resolveConfig(options);
-    this.#config = config;
-    this.#logger = config.logger;
-    this.#metricsEnabled = config.metricsEnabled;
-    this.#queryTimeoutMs = config.queryTimeoutMs;
-    this.#extractColumns = config.extractColumns;
-
-    if (typeof config.verbose === "function") {
-      this.#verbose = config.verbose;
-    } else if (config.verbose === true) {
-      this.#verbose = (sql: string) => this.#log("debug", sql);
-    }
-
-    this.#db = db;
-    this.#pageSize = 4096;
-    this.#writeQueue = new WriteQueue();
-    this.#retryPolicy = new RetryPolicy(config.retry);
-    this.#statementCache = new StatementCache(this.#db);
-    this.#transactionManager = new TransactionManager(
-      this.#db,
-      this.#writeQueue,
-      config.hooks,
-      this.#logger,
-    );
-    this.#fts5 = new FTS5Helper(this.#db);
-    this.#setupEventHandlers(config.events);
+    return new BunQL(":memory:", { ...options, dbInstance: db });
   }
 
   query<T = Record<string, unknown>>(sql: string, params?: SQLQueryBindings[]): QueryResult<T> {
@@ -856,31 +822,33 @@ export class BunQL {
 
     const intervalMs = Math.min(...intervals);
 
-    this.#maintenanceTimer = setInterval(() => {
+    this.#maintenanceTimer = setInterval(async () => {
       if (this.#closed) return;
-      this.#writeQueue.enqueue(async () => {
-        if (maintenance.checkpoint?.enabled) {
-          const status = this.#walStatusDirect();
-          if (status.walSizePages > (maintenance.checkpoint.pagesThreshold ?? 1000)) {
-            this.#checkpointDirect(maintenance.checkpoint.mode ?? "TRUNCATE");
+      try {
+        await this.#writeQueue.enqueue(async () => {
+          if (maintenance.checkpoint?.enabled) {
+            const status = this.#walStatusDirect();
+            if (status.walSizePages > (maintenance.checkpoint.pagesThreshold ?? 1000)) {
+              this.#checkpointDirect(maintenance.checkpoint.mode ?? "TRUNCATE");
+            }
           }
-        }
-        if (maintenance.vacuum?.enabled) {
-          const pages = maintenance.vacuum.pagesPerStep ?? 100;
-          if (maintenance.vacuum.mode === "full") {
-            this.#db.exec("VACUUM");
-          } else {
-            this.#db.exec(`PRAGMA incremental_vacuum(${pages})`);
+          if (maintenance.vacuum?.enabled) {
+            const pages = maintenance.vacuum.pagesPerStep ?? 100;
+            if (maintenance.vacuum.mode === "full") {
+              this.#db.exec("VACUUM");
+            } else {
+              this.#db.exec(`PRAGMA incremental_vacuum(${pages})`);
+            }
           }
-        }
-        if (maintenance.backup?.enabled) {
-          const ts = new Date().toISOString().replace(/[:.]/g, "-");
-          const path = `${maintenance.backup.path.replace(/\/$/, "")}/bunql-backup-${ts}.db`;
-          this.#db.exec(`VACUUM INTO '${path.replace(/'/g, "''")}'`);
-        }
-      }).catch((error) => {
+          if (maintenance.backup?.enabled) {
+            const ts = new Date().toISOString().replace(/[:.]/g, "-");
+            const path = `${maintenance.backup.path.replace(/\/$/, "")}/bunql-backup-${ts}.db`;
+            this.#db.exec(`VACUUM INTO '${path.replace(/'/g, "''")}'`);
+          }
+        });
+      } catch (error) {
         this.#log("error", `Maintenance task failed: ${error}`);
-      });
+      }
     }, intervalMs);
   }
 

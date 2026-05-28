@@ -51,6 +51,8 @@ export interface BunQLOptions {
   cacheSize?: number;
   foreignKeys?: boolean;
   safeIntegers?: boolean;
+  /** Pre-existing bun:sqlite Database instance (for deserialize). Bypasses path-based constructor. */
+  dbInstance?: import("bun:sqlite").Database;
   retry?: RetryConfig;
   logger?: Logger;
   hooks?: BunQLHooks;

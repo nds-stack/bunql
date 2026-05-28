@@ -336,8 +336,17 @@ describe("BunQL serialize/deserialize", () => {
     db.close();
   });
 
-  test.skip("deserialize restores data", () => {
-    // skipped: static deserialize requires internal constructor logic
-    // which may need bun:sqlite Database.deserialize support
+  test("deserialize restores data", () => {
+    const db = new BunQL(":memory:");
+    db.run("CREATE TABLE t (id INTEGER)");
+    db.run("INSERT INTO t VALUES (1)");
+    const buf = db.serialize();
+
+    const db2 = BunQL.deserialize(buf);
+    const rows = db2.query("SELECT * FROM t").rows;
+    expect(rows.length).toBe(1);
+    expect((rows[0] as Record<string, number>).id).toBe(1);
+    db.close();
+    db2.close();
   });
 });

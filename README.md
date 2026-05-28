@@ -234,12 +234,11 @@ Muat file skema `.sql` yang berisi banyak perintah sekaligus:
 
 ```typescript
 import { BunQL } from "@nds-stack/bunql";
-import { readFileSync } from "fs";
 
 const db = new BunQL("./app.db");
 
-// Load schema file — semua perintah dijalankan serial via WriteQueue
-const schema = readFileSync("./schema.sql", "utf-8");
+// Load schema file
+const schema = await Bun.file("./schema.sql").text();
 await db.exec(schema);
 ```
 

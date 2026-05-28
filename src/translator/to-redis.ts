@@ -43,7 +43,8 @@ function translateSelect(n: import("../ast/ast.ts").SelectNode): RedisCommand {
     return { command: rev ? "ZREVRANGE" : "ZRANGE", args: [`${table}:${key}`, String(start), String(stop), "WITHSCORES"] };
   }
 
-  return { command: "KEYS", args: [`${table}:*`] };
+  // Fallback: SCAN for pattern matching. Redis KEYS is O(n) and blocks — SCAN is non-blocking.
+  return { command: "SCAN", args: ["0", "MATCH", `${table}:*`] };
 }
 
 function translateInsert(n: import("../ast/ast.ts").InsertNode): RedisCommand {
