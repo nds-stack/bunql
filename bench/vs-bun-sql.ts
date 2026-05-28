@@ -1,22 +1,33 @@
 /**
- * Benchmark: @nds-stack/bunql custom PG/MySQL drivers vs Bun.SQL native.
+ * Benchmark: @nds-stack/bunql drivers vs native Bun backends.
  *
- * Requires running PostgreSQL and MySQL instances.
- * Usage: bun run bench:vs-bun-sql
+ * Backends tested:
+ *   - SQLite: bun:sqlite (Database) vs BunQL facade
+ *   - PG:     Bun.SQL vs PGDriver (custom TCP)
+ *   - MySQL:  Bun.SQL vs MySQLDriver (custom TCP)
+ *   - MongoDB: MongoDriver only (Bun has no built-in MongoDB driver)
+ *
+ * Usage: bun run bench/vs-bun-sql.ts
  *
  * Config via env:
- *   PG_URL="postgres://postgres:postgres@localhost:5432/postgres"
- *   MYSQL_URL="mysql://root:root@localhost:3306/mysql"
+ *   PG_URL="postgres://postgres@localhost:5432/postgres"
+ *   MYSQL_URL="mysql://root@localhost:3306/mysql"
+ *   MONGO_URL="mongodb://localhost:27017/test_bench"
  *   ITERATIONS=500
  *   WARMUP=100
  */
 
 import { SQL } from "bun";
+import { Database as BunSQLiteDatabase } from "bun:sqlite";
 import { PGDriver } from "../src/driver/pg.ts";
 import { MySQLDriver } from "../src/driver/mysql.ts";
+import { MongoDriver } from "../src/driver/mongodb.ts";
+import { BunQL } from "../src/bunql.ts";
+import { unlinkSync } from "fs";
 
-const PG_URL = process.env.PG_URL || "postgres://postgres:postgres@localhost:5432/postgres";
-const MYSQL_URL = process.env.MYSQL_URL || "mysql://root:root@localhost:3306/mysql";
+const PG_URL = process.env.PG_URL || "postgres://postgres@localhost:5432/postgres";
+const MYSQL_URL = process.env.MYSQL_URL || "mysql://root@localhost:3306/mysql";
+const MONGO_URL = process.env.MONGO_URL || "mongodb://localhost:27017/test_bench";
 const ITERATIONS = parseInt(process.env.ITERATIONS || "500", 10);
 const WARMUP = parseInt(process.env.WARMUP || "100", 10);
 
@@ -43,6 +54,135 @@ function printRow(label: string, bunSql: BenchResult, custom: BenchResult): void
   console.log(
     `| ${label.padEnd(36)} | ${bunOps.padStart(10)} ops/s | ${customOps.padStart(10)} ops/s | ${overhead.padStart(5)}% |`,
   );
+}
+
+function printBareRow(label: string, result: BenchResult): void {
+  const ops = result.ops.toLocaleString();
+  console.log(`| ${label.padEnd(36)} | ${ops.padStart(10)} ops/s |`);
+}
+
+async function benchSQLite(iter: number, warmup: number): Promise<void> {
+  console.log("\n## SQLite: bun:sqlite (Database) vs BunQL\n");
+  console.log("| Operation | bun:sqlite | BunQL | Overhead |");
+  console.log("|-----------|------------|-------|----------|");
+
+  function freshRaw(sql: string): { db: BunSQLiteDatabase; stmt: ReturnType<BunSQLiteDatabase["prepare"]> } {
+    const db = new BunSQLiteDatabase(":memory:");
+    db.run("CREATE TABLE bench_users (id INTEGER, name TEXT, email TEXT)");
+    return { db, stmt: db.prepare(sql) };
+  }
+
+  function freshBQ(): BunQL {
+    const db = new BunQL(":memory:");
+    db.run("CREATE TABLE bench_users (id INTEGER, name TEXT, email TEXT)");
+    return db;
+  }
+
+  // ─── SELECT ─────────────────────────────────────────
+  {
+    const { db: raw, stmt: rawStmt } = freshRaw("SELECT * FROM bench_users WHERE id = ?");
+    raw.run("INSERT INTO bench_users (id, name, email) VALUES (1, 'Alice', 'a@t.com')");
+    const rawDurations: number[] = [];
+    for (let i = 0; i < warmup; i++) rawStmt.get(1);
+    for (let i = 0; i < iter; i++) {
+      const t0 = performance.now();
+      rawStmt.get(1);
+      rawDurations.push(performance.now() - t0);
+    }
+    raw.close();
+
+    const bunql = freshBQ();
+    bunql.run("INSERT INTO bench_users (id, name, email) VALUES (1, 'Alice', 'a@t.com')");
+    const bqDurations: number[] = [];
+    for (let i = 0; i < warmup; i++) bunql.query("SELECT * FROM bench_users WHERE id = 1");
+    for (let i = 0; i < iter; i++) {
+      const t0 = performance.now();
+      bunql.query("SELECT * FROM bench_users WHERE id = 1");
+      bqDurations.push(performance.now() - t0);
+    }
+    bunql.close();
+
+    printRow("SELECT one row (by id, cached stmt)", stats(rawDurations), stats(bqDurations));
+  }
+
+  // ─── INSERT ─────────────────────────────────────────
+  {
+    const { db: raw, stmt: rawStmt } = freshRaw("INSERT INTO bench_users (id, name, email) VALUES (?, ?, ?)");
+    const rawDurations: number[] = [];
+    for (let i = -warmup; i < iter; i++) {
+      const id = i < 0 ? i + warmup : i;
+      const t0 = performance.now();
+      rawStmt.run(id, "test", "t@t.com");
+      if (i >= 0) rawDurations.push(performance.now() - t0);
+    }
+    raw.close();
+
+    const bunql = freshBQ();
+    const bqDurations: number[] = [];
+    for (let i = -warmup; i < iter; i++) {
+      const id = i < 0 ? i + warmup : i;
+      const t0 = performance.now();
+      bunql.run("INSERT INTO bench_users (id, name, email) VALUES (?, ?, ?)", [id, "test", "t@t.com"]);
+      if (i >= 0) bqDurations.push(performance.now() - t0);
+    }
+    bunql.close();
+
+    printRow("INSERT one row (parameterized)", stats(rawDurations), stats(bqDurations));
+  }
+}
+
+async function benchMongoDB(iter: number, warmup: number): Promise<void> {
+  console.log("\n## MongoDB: MongoDriver (Bun has no built-in MongoDB driver)\n");
+  console.log("| Operation | MongoDriver |");
+  console.log("|-----------|-------------|");
+
+  const mongo = new MongoDriver(MONGO_URL);
+
+  // Setup
+  await mongo.run("DELETE FROM bench_users");
+
+  // ─── Simple SELECT ──────────────────────────────────
+  {
+    await mongo.run("INSERT INTO bench_users (_id, name, email) VALUES (1, 'Alice', 'a@t.com')");
+
+    const durations: number[] = [];
+
+    for (let i = 0; i < warmup; i++) {
+      await mongo.query("SELECT * FROM bench_users WHERE _id = 1");
+    }
+
+    for (let i = 0; i < iter; i++) {
+      const t0 = performance.now();
+      await mongo.query("SELECT * FROM bench_users WHERE _id = 1");
+      durations.push(performance.now() - t0);
+    }
+
+    printBareRow("SELECT one row (by _id, SQL)", stats(durations));
+  }
+
+  // ─── Single INSERT ──────────────────────────────────
+  {
+    await mongo.run("DELETE FROM bench_users");
+    const durations: number[] = [];
+
+    for (let i = 0; i < warmup; i++) {
+      await mongo.run(`INSERT INTO bench_users (_id, name, email) VALUES (${i}, 'warmup', 'w@t.com')`);
+    }
+    await mongo.run("DELETE FROM bench_users");
+
+    let counter = 0;
+    for (let i = 0; i < iter; i++) {
+      const id = counter++;
+      const t0 = performance.now();
+      await mongo.run(`INSERT INTO bench_users (_id, name, email) VALUES (${id}, 'test', 't@t.com')`);
+      durations.push(performance.now() - t0);
+    }
+
+    printBareRow("INSERT one row (SQL with literals)", stats(durations));
+  }
+
+  await mongo.run("DELETE FROM bench_users");
+  await mongo.close();
 }
 
 async function benchPG(iter: number, warmup: number): Promise<void> {
@@ -95,7 +235,7 @@ async function benchPG(iter: number, warmup: number): Promise<void> {
 
     for (let i = 0; i < warmup; i++) {
       await bunSql`INSERT INTO bench_users (id, name, email) VALUES (${i}, 'warmup', 'w@t.com')`;
-      await pg.run("INSERT INTO bench_users (id, name, email) VALUES (?, ?, ?)", [i, "warmup", "w@t.com"]);
+      await pg.run("INSERT INTO bench_users (id, name, email) VALUES ($1, $2, $3)", [i, "warmup", "w@t.com"]);
     }
     await bunSql`DELETE FROM bench_users`;
     await pg.run("DELETE FROM bench_users");
@@ -109,7 +249,7 @@ async function benchPG(iter: number, warmup: number): Promise<void> {
 
       const id2 = counter++;
       const t1 = performance.now();
-      await pg.run("INSERT INTO bench_users (id, name, email) VALUES (?, ?, ?)", [id2, "test", "t@t.com"]);
+      await pg.run("INSERT INTO bench_users (id, name, email) VALUES ($1, $2, $3)", [id2, "test", "t@t.com"]);
       customDurations.push(performance.now() - t1);
     }
 
@@ -200,8 +340,15 @@ async function main() {
   console.log(`Iterations: ${ITERATIONS}, Warmup: ${WARMUP}`);
   console.log(`PG: ${PG_URL}`);
   console.log(`MySQL: ${MYSQL_URL}`);
+  console.log(`MongoDB: ${MONGO_URL}`);
 
   const start = performance.now();
+
+  try {
+    await benchSQLite(ITERATIONS, WARMUP);
+  } catch (e) {
+    console.log(`\nSQLite benchmark skipped: ${e}`);
+  }
 
   try {
     await benchPG(ITERATIONS, WARMUP);
@@ -213,6 +360,12 @@ async function main() {
     await benchMySQL(ITERATIONS, WARMUP);
   } catch (e) {
     console.log(`\nMySQL benchmark skipped: ${e}`);
+  }
+
+  try {
+    await benchMongoDB(ITERATIONS, WARMUP);
+  } catch (e) {
+    console.log(`\nMongoDB benchmark skipped: ${e}`);
   }
 
   const elapsed = ((performance.now() - start) / 1000).toFixed(1);

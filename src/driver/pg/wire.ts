@@ -129,12 +129,12 @@ export function encodeParse(name: string, sql: string, paramTypes?: number[]): U
 export function encodeBind(portal: string, stmt: string, params: (Uint8Array | null)[]): Uint8Array {
   const portalBytes = textEncoder.encode(portal + "\0");
   const stmtBytes = textEncoder.encode(stmt + "\0");
-  // All text format (param format code 0)
+  // All param format codes = 0 (text) — zero-length list implies text format for all
   const paramFmts = be16(0);
   const numParams = be16(params.length);
   const paramData = concat(params.map((p) => p ? concat([be32(p.length), p]) : be32(-1)));
-  // All text result format
-  const resultFmts = be16(1);
+  // All result format codes = 0 (text)
+  const resultFmts = be16(0);
   const body = concat([portalBytes, stmtBytes, paramFmts, numParams, paramData, resultFmts]);
   const len = be32(4 + body.length);
   return encodeMessage("B", concat([len, body]));

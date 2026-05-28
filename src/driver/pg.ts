@@ -75,8 +75,8 @@ export class PGDriver implements DriverAdapter {
       } else {
         result = await conn.query(sql);
       }
-      const match = result.commandTag.match(/^(\w+)\s+(\d+)/);
-      const changes = match ? parseInt(match[2]!, 10) : 0;
+      const match = result.commandTag.match(/(\d+)$/);
+      const changes = match ? parseInt(match[1]!, 10) : 0;
       return { changes, lastInsertRowid: 0 };
     } finally {
       this.#pool.release(conn);

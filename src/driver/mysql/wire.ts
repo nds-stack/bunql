@@ -220,13 +220,11 @@ export function encodeStmtExecute(seq: number, stmtId: number, params: (Uint8Arr
 
   for (let i = 0; i < params.length; i++) {
     const p = params[i]!;
-    // For each param: type(2) + sign(1) + length(4) + value
+    // For each param: type(2) + sign(1) + optionally value
     paramData.push(uint16LE(0x0f)); // MYSQL_TYPE_VAR_STRING
     paramData.push(uint8(0));       // unsigned
-    if (p === null) {
-      // null bitmap handles this
-    } else {
-      paramData.push(uint32LE(p.length));
+    if (p !== null) {
+      paramData.push(encodeLenEnc(p.length));
       paramData.push(p);
     }
   }
@@ -367,14 +365,15 @@ export function parsePrepareOK(first: Uint8Array, packets: Uint8Array[]): Prepar
     const err = parseError(first);
     throw new WireError(err.message, err.code);
   }
-  let off = 0;
-  const stmtId = new DataView(first.buffer, first.byteOffset, first.byteLength).getUint32(off, true); off += 4;
-  const columnCount = readLenEncInt(first, off).value; off += 1;
-  const paramCount = readLenEncInt(first, off).value; off += 1;
+  // MySQL 8.0: 0x00 OK header + 4-byte stmt_id + 2-byte columns + 2-byte params + 1 filler + 2 warning
+  const v = new DataView(first.buffer, first.byteOffset, first.byteLength);
+  let off = 1; // skip OK header
+  const stmtId = v.getUint32(off, true); off += 4;
+  const columnCount = v.getUint16(off, true); off += 2;
+  const paramCount = v.getUint16(off, true); off += 2;
   off += 1; // filler
-  const warningCount = new DataView(first.buffer, first.byteOffset + off, first.byteLength - off).getUint16(0, true);
+  const warningCount = v.getUint16(off, true); off += 2;
 
-  // Parse param definitions + column definitions from subsequent packets
   return { type: "prepare_ok", statementId: stmtId, columnCount, paramCount, warningCount };
 }
 
@@ -522,6 +521,13 @@ function uint16LE(value: number): Uint8Array {
   const buf = new Uint8Array(2);
   new DataView(buf.buffer).setUint16(0, value, true);
   return buf;
+}
+
+function encodeLenEnc(value: number): Uint8Array {
+  if (value < 0xfb) return new Uint8Array([value]);
+  if (value < 0x10000) return new Uint8Array([0xfc, value & 0xff, (value >> 8) & 0xff]);
+  if (value < 0x1000000) return new Uint8Array([0xfd, value & 0xff, (value >> 8) & 0xff, (value >> 16) & 0xff]);
+  return new Uint8Array([0xfe, value & 0xff, (value >> 8) & 0xff, (value >> 16) & 0xff, (value >> 24) & 0xff]);
 }
 
 function concatBytes(...chunks: Uint8Array[]): Uint8Array {

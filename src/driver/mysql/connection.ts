@@ -113,10 +113,22 @@ export class MySQLConnection {
     this.#seq = 0;
     const packet = encodeStmtPrepare(this.#seq++, sql);
     this.#socket.write(packet);
+
+    // Read prepare_ok + all column/param definition packets
     const raw = await this.#readBuffer();
     const packets = assemblePackets(raw);
     if (packets.length === 0) throw new MySQLError("Empty prepare response");
-    return parsePrepareOK(packets[0]!, packets);
+    const info = parsePrepareOK(packets[0]!, packets);
+
+    // Drain remaining packets (column defs, param defs, EOF)
+    const totalPackets = 1 + info.columnCount + info.paramCount;
+    while (packets.length < totalPackets) {
+      const more = await this.#readBuffer();
+      const morePackets = assemblePackets(more);
+      packets.push(...morePackets);
+    }
+
+    return info;
   }
 
   async executePrepared(stmtId: number, params: (Uint8Array | null)[]): Promise<ResponsePacket> {

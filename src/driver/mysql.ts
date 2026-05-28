@@ -50,21 +50,34 @@ export class MySQLDriver implements DriverAdapter {
     this.#pool = new MySQLConnectionPool(config);
   }
 
+  escapeValue(v: unknown): string {
+    if (v === null || v === undefined) return "NULL";
+    if (typeof v === "number") return String(v);
+    if (typeof v === "boolean") return v ? "1" : "0";
+    const s = String(v);
+    // Escape single quotes, backslashes, and NUL bytes
+    return "'" + s.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/\0/g, "\\0") + "'";
+  }
+
+  buildQuery(sql: string, params: unknown[]): string {
+    let result = "";
+    let paramIdx = 0;
+    for (let i = 0; i < sql.length; i++) {
+      if (sql[i] === "?" && (i === 0 || sql[i - 1] !== "\\")) {
+        result += this.escapeValue(params[paramIdx]! ?? null);
+        paramIdx++;
+      } else {
+        result += sql[i];
+      }
+    }
+    return result;
+  }
+
   async query(sql: string, params?: unknown[]): Promise<QueryResult> {
     const conn = await this.#pool.acquire();
     try {
-      let result: ResponsePacket;
-      if (params && params.length > 0) {
-        const stmtInfo = await conn.prepare(sql);
-        const paramBytes: (Uint8Array | null)[] = params.map((p) => {
-          if (p === null || p === undefined) return null;
-          return textEncoder.encode(String(p));
-        });
-        result = await conn.executePrepared(stmtInfo.statementId, paramBytes);
-        conn.closeStmt(stmtInfo.statementId);
-      } else {
-        result = await conn.query(sql);
-      }
+      const finalSQL = params && params.length > 0 ? this.buildQuery(sql, params) : sql;
+      const result = await conn.query(finalSQL);
       if (result.type === "error") throw new MySQLError(result.message, result.code);
       if (result.type === "ok") return { columns: [], rows: [], duration: 0 };
       const rs = result as ResultSetPacket;
@@ -84,18 +97,8 @@ export class MySQLDriver implements DriverAdapter {
   async run(sql: string, params?: unknown[]): Promise<RunResult> {
     const conn = await this.#pool.acquire();
     try {
-      let result: ResponsePacket;
-      if (params && params.length > 0) {
-        const stmtInfo = await conn.prepare(sql);
-        const paramBytes: (Uint8Array | null)[] = params.map((p) => {
-          if (p === null || p === undefined) return null;
-          return textEncoder.encode(String(p));
-        });
-        result = await conn.executePrepared(stmtInfo.statementId, paramBytes);
-        conn.closeStmt(stmtInfo.statementId);
-      } else {
-        result = await conn.query(sql);
-      }
+      const finalSQL = params && params.length > 0 ? this.buildQuery(sql, params) : sql;
+      const result = await conn.query(finalSQL);
       if (result.type === "error") throw new MySQLError(result.message, result.code);
       if (result.type === "resultset") return { changes: result.rows.length, lastInsertRowid: 0 };
       return { changes: result.affectedRows, lastInsertRowid: result.lastInsertId };

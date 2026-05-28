@@ -6,7 +6,7 @@
 [![Bun](https://img.shields.io/badge/Bun-%3E%3D1.3.0-black?logo=bun)](https://bun.sh)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue?logo=typescript)](https://www.typescriptlang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-308-green)]()
+[![Tests](https://img.shields.io/badge/tests-345-green)]()
 [![Bundle](https://img.shields.io/badge/bundle-83.1KB%20core%20%2F%20114.7KB%20driver-blue)]()
 
 ---
@@ -1121,38 +1121,26 @@ await db.transaction(async (tx) => {
 
 ## Benchmarks
 
-**Test machine:** Intel i7-7500U @ 2.90GHz, 8GB RAM, Samsung NVMe SSD 238GB, Windows 10 x64<br>
-**Methodology:** 5000 iterations, 1000 warmup (discarded), 5 runs, reporting median (min–max).<br>
-**Settings:** All targets use identical PRAGMA — `WAL`, `synchronous=NORMAL`, `cache_size=-2000`, `foreign_keys=ON`.
+**Test machine:** Intel i7-7500U @ 2.90GHz, 8GB RAM, Samsung NVMe SSD 238GB, Windows 10 x64
 
-**7 competitors across 3 runtimes:** Bun 1.3.14 (native), Node.js 22.12.0 (CJS), Deno 2.7.14 (FFI).
+### Custom Drivers vs Bun.SQL
 
-### Synthetic Throughput
+Benchmark of `@nds-stack/bunql` custom TCP drivers (PG, MySQL, MongoDB) against Bun's native `Bun.SQL` (PG/MySQL only — Bun has no built-in MongoDB driver), plus SQLite facade overhead:
 
-| Operation | `bun:sqlite` raw | Manual retry | `better-sqlite3` 12 | `sqlite3` 6.0 | `node:sqlite` | Deno SQLite | `sql.js` WASM | **BunQL** |
-|-----------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Point read | 268K | 321K | 256K | 23.9K | 246K | 124K | 37.3K | **259K** |
-| Single write | 38.4K | 45.7K | 35.5K | 14.5K | 37.6K | 34.8K | 13.0K | **41.9K** |
-| 10 concurrent | 56.1K | 71.0K | 38.3K | — | 31.4K | 48.4K | — | **51.8K** |
-| 50 concurrent | 28.8K | 29.1K | 31.1K | — | 34.2K | 35.0K | — | **39.9K** |
+**Script:** `bench/vs-bun-sql.ts` — 500 iterations, 100 warmup, separate `:memory:` databases for fair SQLite comparison.
 
-> `sqlite3@6.0.1` is callback-based — serialized async queue. Read/Write measured via callback completion. `sql.js` is WASM single-threaded. Both excluded from concurrent tests.
->
-> `better-sqlite3` and `node:sqlite` are **synchronous blocking** APIs — writes execute sequentially on the main thread via `setImmediate` scheduling. No true concurrency occurs (no overlap, no SQLITE_BUSY). Concurrent numbers reflect event loop overhead, not parallel throughput. Compare with `bun:sqlite` (raw) and Manual retry for fair async concurrency benchmarks.
->
-> Concurrent writes use manual retry loop (max 5 attempts, exponential backoff). BunQL `run()` is synchronous — no retry needed. For queue-based operations (`transaction`, `batch`, `exec`), retry is handled automatically.
->
-> **Hardware matters.** Official better-sqlite3 benchmark reports 314K read / 62.6K write on macOS (SSD). Our 294K / 40.8K on Windows NVMe is consistent — macOS I/O stack has lower `fsync` latency for SQLite commits.
+| Driver | Operation | Baseline | bunql | Overhead |
+|--------|-----------|----------|-------|----------|
+| **SQLite** | SELECT (cached stmt) | 193M ops/s (bun:sqlite) | 89M ops/s | 141% |
+| **SQLite** | INSERT (parameterized) | 97M ops/s (bun:sqlite) | 87M ops/s | 0% |
+| **PG** | SELECT (parameterized) | 3.14M ops/s (Bun.SQL) | 2.48M ops/s | 10% |
+| **PG** | INSERT (parameterized) | 1.69M ops/s (Bun.SQL) | 1.26M ops/s | 13% |
+| **MySQL** | SELECT (parameterized) | 1.96M ops/s (Bun.SQL) | 1.85M ops/s | 2% |
+| **MySQL** | INSERT (parameterized) | 247K ops/s (Bun.SQL) | 236K ops/s | 1% |
+| **MongoDB** | SELECT | — | 1.46M ops/s | — |
+| **MongoDB** | INSERT | — | 1.30M ops/s | — |
 
-### Realistic Workloads (BunQL only)
-
-| Workload | Description | Throughput |
-|----------|-------------|-----------|
-| Mixed | 167r + 167w + 166tx | 22.4K ops/s |
-| Batch | 500 writes in single batch call | 82.9K ops/s |
-| Cache pressure | 200 unique queries (triggers LRU evictions) | 23.2K ops/s |
-
----
+> SQLite SELECT overhead comes from BunQL's cache lookup + query parsing + row-to-object mapping. SQLite INSERT overhead is negligible because `run()` passes through directly to `bun:sqlite`. PG overhead comes from extended query protocol (Parse+Bind+Describe+Execute+Sync pipeline). MySQL uses simple COM_QUERY with inline params, keeping overhead under 2%. MongoDB has no baseline since Bun has no built-in MongoDB driver.
 
 ## Error Handling
 
@@ -1284,7 +1272,7 @@ Write operations via the `/run` endpoint are synchronous (direct to `bun:sqlite`
 - **v0.4.1 (stable)** — MongoDB driver (custom TCP + BSON, SCRAM-SHA-256, sessions)
 - **v0.4.0 (stable)** — Universal AST + SQL parser + MQL parser + bidirectional translators
 - **v0.3.0 (stable)** — Statement format control, transaction modes, pragma helper, serialize, verbose mode
-- **308 tests** — unit, integration, concurrency, stress, FTS5, parser, translators, BSON, RESP, PG wire, MySQL wire, transactions
+- **345 tests** — unit, integration, concurrency, stress, FTS5, parser, translators, BSON, RESP, PG wire, MySQL wire, transactions
 - **5000 sequential writes** — verified stable
 - **Graceful shutdown** — drain queue → finalize statements → close DB
 - **Memory safe** — LRU cache eviction, `yocto-queue` linked-list, no unbounded growth
