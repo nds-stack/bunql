@@ -28,6 +28,8 @@ export class RedisConnection {
   #pendingReject: ((err: Error) => void) | null = null;
   #closed = false;
   #authenticated = false;
+  #inTransaction = false;
+  #txQueue: string[][] = [];
 
   constructor(config: RedisConnectionConfig) {
     this.config = config;
@@ -88,8 +90,56 @@ export class RedisConnection {
     if (!this.#authenticated && this.config.password) {
       throw new Error("Not authenticated");
     }
+    if (this.#inTransaction) {
+      this.#txQueue.push(args);
+      return { type: "simple-string", value: "QUEUED" };
+    }
     return this.#sendCommand(args);
   }
+
+  async multi(): Promise<void> {
+    await this.#sendCommand(["MULTI"]);
+    this.#inTransaction = true;
+    this.#txQueue = [];
+  }
+
+  async exec(): Promise<RESPValue[]> {
+    if (!this.#inTransaction) throw new Error("Not in transaction");
+    this.#inTransaction = false;
+    const queue = this.#txQueue;
+    this.#txQueue = [];
+
+    // Send EXEC command
+    const execData = encodeCommand("EXEC", []);
+    this.#socket!.write(execData);
+    const raw = await this.#readResponse();
+    const val = decodeSimple(raw);
+
+    if (val.type === "error") throw new RedisError(`EXEC failed: ${val.value}`);
+    if (val.type === "array" && val.value) {
+      return val.value;
+    }
+    return [];
+  }
+
+  async discard(): Promise<void> {
+    if (!this.#inTransaction) throw new Error("Not in transaction");
+    this.#inTransaction = false;
+    this.#txQueue = [];
+    const resp = await this.#sendCommand(["DISCARD"]);
+    if (resp.type === "error") throw new RedisError(`DISCARD failed: ${resp.value}`);
+  }
+
+  get inTransaction(): boolean {
+    return this.#inTransaction;
+  }
+
+  // TransactionBackend interface
+  async begin(): Promise<void> { await this.multi(); }
+  async commit(): Promise<void> { await this.exec(); }
+  async savepoint(_name: string): Promise<void> { /* Redis does not support savepoints */ }
+  async releaseSavepoint(_name: string): Promise<void> { /* no-op */ }
+  async rollbackTo(_name: string): Promise<void> { await this.discard(); }
 
   async close(): Promise<void> {
     this.#closed = true;

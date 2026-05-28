@@ -5,6 +5,7 @@
 
 import { buildCommand, parseResponse, readHeader } from "./wire-protocol";
 import { performScramSha256 } from "./auth-scram";
+import { encodeBSON } from "./bson-encoder";
 
 export interface MongoConnectionConfig {
   hostname: string;
@@ -32,6 +33,7 @@ export class MongoConnection {
   #closed = false;
   #authenticated = false;
   #requestId = 1;
+  #session: { id: Uint8Array; txnNumber: number } | null = null;
 
   constructor(config: MongoConnectionConfig) {
     this.config = config;
@@ -107,6 +109,64 @@ export class MongoConnection {
 
     return response;
   }
+
+  // ─── Sessions & Transactions ──────────────────────────
+
+  startSession(): void {
+    const id = new Uint8Array(16);
+    crypto.getRandomValues(id);
+    this.#session = { id, txnNumber: 0 };
+  }
+
+  endSession(): void {
+    this.#session = null;
+  }
+
+  get hasSession(): boolean {
+    return this.#session !== null;
+  }
+
+  async executeWithSession(db: string, command: Record<string, unknown>): Promise<Record<string, unknown>> {
+    if (!this.#session) return this.execute(db, command);
+    const lsidDoc = encodeBSON({ id: this.#session.id });
+    const cmd = { ...command, lsid: { $binary: { base64: btoa(String.fromCharCode(...this.#session.id)), subType: "04" } } };
+    return this.execute(db, cmd);
+  }
+
+  async startTransaction(): Promise<void> {
+    if (!this.#session) this.startSession();
+    this.#session!.txnNumber++;
+  }
+
+  async commitTransaction(): Promise<Record<string, unknown>> {
+    if (!this.#session) throw new MongoError("No active session");
+    const lsidDoc = { id: { $binary: { base64: btoa(String.fromCharCode(...this.#session.id)), subType: "04" } } };
+    return this.execute("admin", {
+      commitTransaction: 1,
+      lsid: lsidDoc,
+      txnNumber: this.#session.txnNumber,
+      autocommit: false,
+    });
+  }
+
+  async abortTransaction(): Promise<Record<string, unknown>> {
+    if (!this.#session) throw new MongoError("No active session");
+    const lsidDoc = { id: { $binary: { base64: btoa(String.fromCharCode(...this.#session.id)), subType: "04" } } };
+    return this.execute("admin", {
+      abortTransaction: 1,
+      lsid: lsidDoc,
+      txnNumber: this.#session.txnNumber,
+      autocommit: false,
+    });
+  }
+
+  // TransactionBackend interface
+  async begin(): Promise<void> { await this.startTransaction(); }
+  async commit(): Promise<void> { await this.commitTransaction(); }
+  async rollback(): Promise<void> { await this.abortTransaction(); }
+  async savepoint(_name: string): Promise<void> { /* MongoDB does not support savepoints */ }
+  async releaseSavepoint(_name: string): Promise<void> { /* no-op */ }
+  async rollbackTo(_name: string): Promise<void> { /* no-op */ }
 
   async close(): Promise<void> {
     this.#closed = true;
