@@ -58,7 +58,7 @@ describe("SqlQuery", () => {
   });
 
   test("all() with mock executor", () => {
-    const q = new SqlQuery("SELECT * FROM users WHERE id = ?", [1], {
+    const q = new SqlQuery<{ id: number; name: string }>("SELECT * FROM users WHERE id = ?", [1], {
       executeSQL: () => ({
         columns: ["id", "name"],
         rows: [{ id: 1, name: "Alice" }],
@@ -66,14 +66,14 @@ describe("SqlQuery", () => {
       executeRun: () => ({ changes: 0, lastInsertRowid: 0 }),
       isAsync: false,
     });
-    const result = q.all<{ id: number; name: string }>() as { id: number; name: string }[];
+    const result = q.all() as { id: number; name: string }[];
     expect(result).toHaveLength(1);
     expect(result[0]!.id).toBe(1);
     expect(result[0]!.name).toBe("Alice");
   });
 
   test("get() with mock executor", () => {
-    const q = new SqlQuery("SELECT * FROM users WHERE id = ?", [1], {
+    const q = new SqlQuery<{ id: number; name: string }>("SELECT * FROM users WHERE id = ?", [1], {
       executeSQL: () => ({
         columns: ["id", "name"],
         rows: [{ id: 1, name: "Alice" }],
@@ -81,7 +81,7 @@ describe("SqlQuery", () => {
       executeRun: () => ({ changes: 0, lastInsertRowid: 0 }),
       isAsync: false,
     });
-    const result = q.get<{ id: number; name: string }>() as { id: number; name: string } | null;
+    const result = q.get() as { id: number; name: string } | null;
     expect(result).not.toBeNull();
     expect(result!.id).toBe(1);
   });
@@ -212,7 +212,7 @@ describe("BunQL sql() / mql()", () => {
     expect(q.sql).toBe("SELECT * FROM test WHERE name = ?");
     expect(q.params).toEqual(["Alice"]);
 
-    const rows = q.all<{ id: number; name: string }>() as { id: number; name: string }[];
+    const rows = q.all() as { id: number; name: string }[];
     expect(rows).toHaveLength(1);
     expect(rows[0]!.name).toBe("Alice");
 

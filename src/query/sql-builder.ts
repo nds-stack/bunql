@@ -6,6 +6,8 @@
 import { parseSQL } from "../parser/sql-parser.ts";
 import { ParseError } from "../parser/sql-parser.ts";
 import { astToSQL } from "../translator/to-sql.ts";
+import type { RelationMap, RelationsResult } from "./relations/relations.ts";
+import { fetchOne, fetchMany } from "./relations/relations.ts";
 
 export interface QueryResult {
   columns: string[];
@@ -44,7 +46,7 @@ function buildSQL(strings: TemplateStringsArray, values: unknown[]): { sql: stri
   return { sql, params };
 }
 
-export class SqlQuery {
+export class SqlQuery<T extends Record<string, unknown> = Record<string, unknown>> {
   readonly sql: string;
   readonly params: unknown[];
   readonly #executor: QueryExecutor | null;
@@ -64,7 +66,7 @@ export class SqlQuery {
     this.#node = node;
   }
 
-  all<T = Record<string, unknown>>(): T[] | Promise<T[]> {
+  all(): T[] | Promise<T[]> {
     const result = this.#executor?.executeSQL(this.sql, this.params);
     if (result instanceof Promise) {
       return result.then((r) => r.rows as T[]);
@@ -72,7 +74,7 @@ export class SqlQuery {
     return (result?.rows ?? []) as T[];
   }
 
-  get<T = Record<string, unknown>>(): T | null | Promise<T | null> {
+  get(): T | null | Promise<T | null> {
     const result = this.#executor?.executeSQL(this.sql, this.params);
     if (result instanceof Promise) {
       return result.then((r) => (r.rows.length > 0 ? (r.rows[0] as T) : null));
@@ -84,12 +86,49 @@ export class SqlQuery {
     return this.#executor!.executeRun(this.sql, this.params);
   }
 
+  with<R extends RelationMap>(relations: R): RelationsQuery<T, R> {
+    return new RelationsQuery(this, relations);
+  }
+
   toSQL(): string {
     if (this.#node) {
       const result = astToSQL(this.#node as Parameters<typeof astToSQL>[0]);
       return result.sql;
     }
     return this.sql;
+  }
+
+  get _executor(): QueryExecutor {
+    if (!this.#executor) throw new Error("No executor provided");
+    return this.#executor;
+  }
+}
+
+export class RelationsQuery<T extends Record<string, unknown>, R extends RelationMap> {
+  readonly #parent: SqlQuery<T>;
+  readonly #relations: R;
+
+  constructor(parent: SqlQuery<T>, relations: R) {
+    this.#parent = parent;
+    this.#relations = relations;
+  }
+
+  all(): RelationsResult<T, R>[] | Promise<RelationsResult<T, R>[]> {
+    const executor = this.#parent._executor;
+    const result = executor.executeSQL(this.#parent.sql, this.#parent.params);
+    if (result instanceof Promise) {
+      return result.then(async () => fetchMany(executor as never, this.#parent.sql, this.#parent.params, this.#relations) as unknown as RelationsResult<T, R>[]);
+    }
+    return fetchMany(executor as never, this.#parent.sql, this.#parent.params, this.#relations) as unknown as RelationsResult<T, R>[];
+  }
+
+  get(): RelationsResult<T, R> | null | Promise<RelationsResult<T, R> | null> {
+    const executor = this.#parent._executor;
+    const result = executor.executeSQL(this.#parent.sql, this.#parent.params);
+    if (result instanceof Promise) {
+      return result.then(async () => fetchOne(executor as never, this.#parent.sql, this.#parent.params, this.#relations) as unknown as RelationsResult<T, R> | null);
+    }
+    return fetchOne(executor as never, this.#parent.sql, this.#parent.params, this.#relations) as unknown as RelationsResult<T, R> | null;
   }
 }
 

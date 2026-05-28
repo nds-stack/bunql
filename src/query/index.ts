@@ -3,10 +3,12 @@
  * @description Re-exports for @nds-stack/bunql/query subpath.
  */
 
-export { sql, SqlQuery } from "./sql-builder.ts";
+export { sql, SqlQuery, RelationsQuery } from "./sql-builder.ts";
 export type { QueryExecutor } from "./sql-builder.ts";
 export { MqlQuery } from "./mql-builder.ts";
 export type { Executor as MqlExecutor } from "./mql-builder.ts";
+export { fetchOne, fetchMany, defineTable, relations } from "./relations/relations.ts";
+export type { RelationDef, RelationMap, RelationsResult, TableDef } from "./relations/relations.ts";
 export {
   col, alias, wildcard, lit, func,
   eq, neq, gt, lt, gte, lte,
