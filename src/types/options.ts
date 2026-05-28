@@ -57,6 +57,8 @@ export interface BunQLOptions {
   readerPool?: number;
   maintenance?: MaintenanceConfig;
   slowQueryThreshold?: number;
+  metricsEnabled?: boolean;
+  queryTimeoutMs?: number;
   pragma?: {
     autoVacuum?: "NONE" | "FULL" | "INCREMENTAL";
   };
@@ -95,6 +97,8 @@ export interface BunQLConfig {
   readerPoolSize: number;
   maintenance?: MaintenanceConfig;
   slowQueryThreshold: number;
+  metricsEnabled: boolean;
+  queryTimeoutMs: number;
   autoVacuum: "NONE" | "FULL" | "INCREMENTAL";
   logger?: Logger;
   hooks?: BunQLHooks;

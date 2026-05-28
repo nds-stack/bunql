@@ -73,12 +73,17 @@ export class BunQL {
     queue: { currentSize: 0, peakSize: 0, totalEnqueued: 0 },
     transactions: { committed: 0, rolledBack: 0 },
   };
+  #metricsEnabled = true;
+  #queryTimeoutMs = 0;
   #pageSize = 4096;
 
   constructor(path: string, options?: BunQLOptions) {
     const config = this.#resolveConfig(options);
     this.#config = config;
     this.#logger = config.logger;
+
+    this.#metricsEnabled = config.metricsEnabled;
+    this.#queryTimeoutMs = config.queryTimeoutMs;
 
     if (config.readerPoolSize > 0 && !config.wal) {
       throw new ConnectionError(
@@ -200,8 +205,12 @@ export class BunQL {
   query<T = Record<string, unknown>>(sql: string, params?: SQLQueryBindings[]): QueryResult<T> {
     this.#ensureOpen();
 
-    this.#metrics.reads.total++;
-    const start = performance.now();
+    if (this.#metricsEnabled) this.#metrics.reads.total++;
+    const start = this.#metricsEnabled ? performance.now() : 0;
+    let timer: Timer | undefined;
+    if (this.#queryTimeoutMs > 0) {
+      timer = setTimeout(() => (this.#db as unknown as { interrupt(): void }).interrupt(), this.#queryTimeoutMs);
+    }
 
     let rows: T[];
     if (this.#readerPool) {
@@ -213,21 +222,32 @@ export class BunQL {
       rows = stmt.all(...(params ?? [])) as T[];
     }
 
-    const columns = rows.length > 0 ? Object.keys(rows[0] as Record<string, unknown>) : [];
-    const durationMs = performance.now() - start;
+    if (timer) clearTimeout(timer);
+    const durationMs = this.#metricsEnabled ? performance.now() - start : 0;
 
     if (this.#config.slowQueryThreshold > 0 && durationMs > this.#config.slowQueryThreshold) {
       this.#config.events?.onSlowQuery?.(sql, durationMs);
     }
 
+    const columns = rows.length > 0 ? Object.keys(rows[0] as Record<string, unknown>) : [];
+    return { rows, columns, durationMs };
+  }
+
+  querySync<T = Record<string, unknown>>(sql: string, params?: SQLQueryBindings[]): QueryResult<T> {
+    this.#ensureOpen();
+    const start = this.#metricsEnabled ? performance.now() : 0;
+    const stmt = this.#statementCache.get(sql);
+    const rows = stmt.all(...(params ?? [])) as T[];
+    const durationMs = this.#metricsEnabled ? performance.now() - start : 0;
+    const columns = rows.length > 0 ? Object.keys(rows[0] as Record<string, unknown>) : [];
     return { rows, columns, durationMs };
   }
 
   async run(sql: string, params?: SQLQueryBindings[]): Promise<RunResult> {
     this.#ensureOpen();
 
-    this.#metrics.writes.total++;
-    const start = performance.now();
+    if (this.#metricsEnabled) this.#metrics.writes.total++;
+    const start = this.#metricsEnabled ? performance.now() : 0;
     this.#config.hooks?.beforeWrite?.(sql, params ?? []);
 
     try {
@@ -238,19 +258,19 @@ export class BunQL {
           return {
             changes: raw.changes,
             lastInsertRowid: raw.lastInsertRowid,
-            durationMs: performance.now() - start,
+            durationMs: this.#metricsEnabled ? performance.now() - start : 0,
           };
         });
       });
 
-      const durationMs = performance.now() - start;
+      const durationMs = this.#metricsEnabled ? performance.now() - start : 0;
       if (this.#config.slowQueryThreshold > 0 && durationMs > this.#config.slowQueryThreshold) {
         this.#config.events?.onSlowQuery?.(sql, durationMs);
       }
       this.#config.hooks?.afterWrite?.(sql, params ?? [], durationMs);
       return result;
     } catch (error) {
-      this.#metrics.writes.failed++;
+      if (this.#metricsEnabled) this.#metrics.writes.failed++;
       const err = error instanceof Error ? error : new Error(String(error));
       this.#onError?.(err);
       throw new QueueError(
@@ -258,6 +278,19 @@ export class BunQL {
         { cause: err },
       );
     }
+  }
+
+  runSync(sql: string, params?: SQLQueryBindings[]): RunResult {
+    this.#ensureOpen();
+    const start = this.#metricsEnabled ? performance.now() : 0;
+    const stmt = this.#statementCache.get(sql);
+    const raw = stmt.run(...(params ?? []));
+    const durationMs = this.#metricsEnabled ? performance.now() - start : 0;
+    return {
+      changes: raw.changes,
+      lastInsertRowid: raw.lastInsertRowid,
+      durationMs,
+    };
   }
 
   async transaction<T>(
@@ -520,6 +553,8 @@ export class BunQL {
       readerPoolSize,
       maintenance: options?.maintenance,
       slowQueryThreshold: options?.slowQueryThreshold ?? 0,
+      metricsEnabled: options?.metricsEnabled ?? true,
+      queryTimeoutMs: options?.queryTimeoutMs ?? 0,
       autoVacuum: options?.pragma?.autoVacuum ?? "NONE",
       logger: options?.logger,
       hooks: options?.hooks,
@@ -530,7 +565,7 @@ export class BunQL {
   #setupEventHandlers(events?: EventHandlers): void {
     const userOnBusy = events?.onBusy;
     this.#retryPolicy.onBusy = (attempt, delay) => {
-      this.#metrics.writes.retried++;
+      if (this.#metricsEnabled) this.#metrics.writes.retried++;
       userOnBusy?.(attempt, delay);
     };
 

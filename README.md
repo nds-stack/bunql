@@ -338,7 +338,8 @@ new BunQL(path: string, options?: BunQLOptions)
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `wal` | `boolean` | `true` | Enable WAL journal mode |
-| `readonly` | `boolean` | `false` | Open in read-only mode |
+| `metricsEnabled` | `boolean` | `true` | Enable performance counters and timing. Set `false` to skip `performance.now()` overhead. |
+| `queryTimeoutMs` | `number` | `0` | Interrupt queries exceeding this duration. `0` = disabled. |
 | `busyTimeout` | `number` | `5000` | SQLite busy timeout (ms) |
 | `synchronous` | `'OFF' \| 'NORMAL' \| 'FULL' \| 'EXTRA'` | `'NORMAL'` | Synchronous mode (NORMAL recommended for WAL) |
 | `cacheSize` | `number` | `-2000` | Page cache size (negative = KB, -2000 = 2MB) |
@@ -366,7 +367,9 @@ new BunQL(path: string, options?: BunQLOptions)
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `query(sql, params?)` | `QueryResult<T>` | Read query. Parallel-safe, uses statement cache. |
+| `querySync(sql, params?)` | `QueryResult<T>` | Synchronous read (fast path). No reader pool. |
 | `run(sql, params?)` | `Promise<RunResult>` | Write query. Serialized via queue, with retry. |
+| `runSync(sql, params?)` | `RunResult` | Synchronous write (fast path). No queue, no retry — accepts SQLITE_BUSY risk. |
 | `transaction(callback)` | `Promise<T>` | Serialized transaction. Auto-rollback on error. |
 | `prepare(sql)` | `Statement<T, P>` | Cached prepared statement. |
 | `batch(operations)` | `Promise<RunResult[]>` | Atomic multi-write transaction. |
