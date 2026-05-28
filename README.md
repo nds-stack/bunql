@@ -613,20 +613,24 @@ The LRU cache holds up to 100 prepared statements. No config knob — the limit 
 
 ## Benchmarks
 
-Environment: Bun v1.3.14, Windows x64, 500 iterations per test.
-Both benchmarks use identical PRAGMA settings: `WAL`, `synchronous=NORMAL`, `cache_size=-2000`, `foreign_keys=ON`.
+Environment: Bun v1.3.14, Node.js v22.12.0, Deno 2.7.14 — Windows x64, 500 iterations per test.
+All targets use identical PRAGMA: `WAL`, `synchronous=NORMAL`, `cache_size=-2000`, `foreign_keys=ON`.
 Results may vary ±30% between runs due to system load and disk caching.
+
+**7 competitors across 3 runtimes:** Bun (native), Node.js (CJS), Deno (FFI).
 
 ### Synthetic Throughput
 
-| Operation | Raw `bun:sqlite` | `@nds-stack/bunql` | Overhead |
-|-----------|-----------------|--------------------|----------|
-| Point read | 216K ops/s | 229K ops/s | +5.8% |
-| Single write | 29.5K ops/s | 23.1K ops/s | -21% |
-| 10 concurrent writes | 64.5K ops/s * | 58.1K ops/s | -10% |
-| 50 concurrent writes | 29.8K ops/s * | 36.7K ops/s | +23% |
+| Operation | `bun:sqlite` raw | Manual retry | `better-sqlite3` 12.10 | `sqlite3` 6.0.1 | `node:sqlite` | Deno SQLite | `sql.js` WASM | **BunQL** |
+|-----------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Point read | 322K | 253K | 166K | 59.5K | 152K | 84.3K | 33.3K | 157K |
+| Single write | 26.8K | 24.9K | 16.7K | 79.9K* | 22.7K | 27.3K | 9.0K | 21.7K |
+| 10 concurrent | 60.6K | 37.3K | — | — | — | — | — | 56.5K |
+| 50 concurrent | 22.2K | 25.1K | — | — | — | — | — | 17.9K |
 
-> \* Raw concurrent benchmark includes manual retry logic with exponential backoff (same strategy as BunQL). Without retry, raw `bun:sqlite` would throw `SQLITE_BUSY`. BunQL eliminates the need for manual retry entirely — writes are serialized, reads are parallel.
+> \* `sqlite3@6.0.1` write numbers reflect async callback enqueue speed, not commit speed. The library uses an internal serialized queue — `db.close()` may not flush all pending operations. Reads are unaffected.
+>
+> Concurrent writes tested on Bun runtime only (Node.js competitors are synchronous/single-threaded). Raw + Manual retry benchmarks include exponential backoff retry logic. BunQL eliminates the need for manual retry — writes are serialized, reads are parallel.
 
 ### Realistic Workloads
 
