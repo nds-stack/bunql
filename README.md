@@ -1,23 +1,29 @@
 # @nds-stack/bunql
 
-> Ergonomic SQLite wrapper for Bun — transaction safety, statement caching, observability. Zero overhead on writes.
+> **Bun Query Language** — tulis SQL atau MQL, jalan di SQLite, MongoDB, Redis, PostgreSQL, MySQL. Satu query, semua backend.
 
 [![npm version](https://img.shields.io/npm/v/%40nds-stack%2Fbunql?color=blue&logo=npm)](https://www.npmjs.com/package/@nds-stack/bunql)
 [![Bun](https://img.shields.io/badge/Bun-%3E%3D1.3.0-black?logo=bun)](https://bun.sh)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue?logo=typescript)](https://www.typescriptlang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-182-green)]()
+[![Bundle](https://img.shields.io/badge/bundle-41.7KB-blue)]()
 
 ---
 
 ## Table of Contents
 
+- [Supported Backends](#supported-backends)
 - [Why bunql](#why-bunql)
+- [How It Works](#how-it-works)
 - [Design Goals](#design-goals)
 - [When to Use](#when-to-use)
 - [When Not to Use](#when-not-to-use)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Examples](#examples)
+  - [Bidirectional: SQL on MongoDB](#bidirectional-sql-on-mongodb)
+  - [Bidirectional: MQL on SQLite](#bidirectional-mql-on-sqlite)
   - [Statement Format Control](#statement-format-control)
   - [Permanent Parameter Binding](#permanent-parameter-binding)
   - [Lazy Iteration + Class Mapping](#lazy-iteration--class-mapping)
@@ -44,60 +50,130 @@
 
 ---
 
+## Supported Backends
+
+| Backend | Status | Auto-detect | Driver |
+|---------|--------|-------------|--------|
+| **SQLite** | ✅ Production (v0.3.0) | `./app.db`, `:memory:` | `bun:sqlite` native |
+| **MongoDB** | 🔜 v0.4.1 | `mongodb://localhost:27017/db` | Custom TCP + BSON (zero deps) |
+| **Redis** | 🔜 v0.4.2 | `redis://localhost:6379` | Custom TCP + RESP (zero deps) |
+| **PostgreSQL** | 🔜 v0.6.0 | `postgres://localhost:5432/db` | Bun PG client (future API) |
+| **MySQL** | 🔜 v0.7.0 | `mysql://localhost:3306/db` | Bun MySQL client (future API) |
+
+```typescript
+import { BunQL } from "@nds-stack/bunql";
+
+// Backend auto-detected from URL
+new BunQL("./app.db");                               // → SQLite
+new BunQL(":memory:");                               // → SQLite (in-memory)
+new BunQL("mongodb://localhost:27017/mydb");         // → MongoDB (future)
+new BunQL("redis://localhost:6379");                 // → Redis (future)
+new BunQL("postgres://localhost:5432/mydb");         // → PostgreSQL (future)
+```
+
 ## Why bunql
 
-**`bun:sqlite` is already fast.** Its `stmt.run()` and `stmt.all()` are synchronous C bindings — zero overhead. bunql doesn't try to beat raw speed.
+### One query, any backend
 
-**bunql adds safety and ergonomics** where `bun:sqlite` leaves you on your own:
+Bunql translates queries through a **Universal AST** — write SQL, run on MongoDB. Write MongoDB-style queries, run on SQLite. Same API, different backends.
 
-| Raw `bun:sqlite` | bunql |
-|---|---|
-| Manual `BEGIN/COMMIT/ROLLBACK` | `db.transaction(cb)` — auto-rollback, SAVEPOINT nesting, 3 modes |
-| Manual statement lifecycle | LRU cache (100), auto-finalize on close |
-| Manual cleanup on shutdown | `db.close()` — drain pending ops, finalize cache |
-| No built-in observability | `db.metrics`, `db.cacheStats`, slow query logging |
-| No reader pool for WAL | `readerPool: N` — round-robin parallel reads |
-| PRAGMA setup manual | Auto-configure WAL, sync=NORMAL, FK=ON, cache |
-| FTS5 API manual | `db.fts.search()`, insert, optimize, rebuild |
-| No format control on results | `.raw()`, `.pluck()`, `.iterate()`, `.as()` — chainable transforms |
-| Manual PRAGMA loops | `db.pragma("key", { simple: true })` — one-liner |
-| Raw SQLite errors | Typed `BunQLError` hierarchy with `.cause` chains |
+| Write this | Runs on |
+|------------|---------|
+| `db.query("SELECT name FROM users WHERE age > 25")` | SQLite, MongoDB, PostgreSQL |
+| `db.mql("users").find({ age: { $gt: 25 } })` | MongoDB, SQLite, PostgreSQL |
+
+### Zero-dependency drivers
+
+Bunql builds its own MongoDB and Redis drivers from scratch — TCP via `Bun.connect()`, custom BSON/RESP codec. No `npm mongodb`, no `ioredis`. No dependency tree. Bundle stays lean.
+
+### Dual API: Raw SQL + Query Builder
 
 ```typescript
 const db = new BunQL("./app.db");
 
-// Writes are synchronous — just like raw bun:sqlite
+// Raw SQL — maximum throughput (production, v0.3.0)
 db.run("INSERT INTO users (name) VALUES (?)", ["Alice"]);
+const users = db.query("SELECT * FROM users WHERE active = ?", [true]);
 
-// Read — cached prepared statement
-const users = db.query<{ id: number; name: string }>("SELECT * FROM users");
-
-// Transaction — async with auto-rollback
-await db.transaction(async (tx) => {
-  tx.run("UPDATE accounts SET balance = balance - 100 WHERE id = 1");
-  tx.run("UPDATE accounts SET balance = balance + 100 WHERE id = 2");
-});
+// Query Builder — Drizzle-compatible API (in development)
+db.select().from(users).where(eq(users.active, true)).all();
 ```
+
+### Beyond better-sqlite3 parity
+
+| Raw `bun:sqlite` | bunql |
+|---|---|
+| Manual BEGIN/COMMIT/ROLLBACK | `db.transaction(cb)` — 3 lock modes, SAVEPOINT nesting |
+| Manual statement lifecycle | LRU cache (100), auto-finalize on close |
+| Objects only (`.all()`) | `.raw()` (arrays), `.pluck()` (scalar), `.as()` (class map), `.iterate()` |
+| No observability | `db.metrics`, `db.cacheStats`, slow query, verbose tracing |
+| No reader pool | `readerPool: N` — round-robin parallel reads |
+| SQLite only | **SQLite, MongoDB, Redis, PostgreSQL, MySQL** — one query language |
+| Manual PRAGMA loops | `db.pragma("key", { simple: true })` |
+| Raw errors | Typed `BunQLError` hierarchy with `.cause` |
+| No auto-maintenance | Scheduled WAL checkpoint, vacuum, backup |
+| Node.js polyfills | Bun-native: `Bun.file()`, `Bun.connect()`, `Bun.sleep()` |
 
 ---
 
+## How It Works
+
+```
+                       ┌──────────────────────────┐
+                       │      Universal AST         │
+                       │   Select | Insert | Update │
+                       │   Delete | Aggregate       │
+                       └──────────┬───────────────┘
+                   ↗             │               ↖
+          sql-parser.ts    AST → backend      mql-parser.ts
+          (SQL → AST)      translators       (MQL → AST)
+              ↗             │    │    │         ↖
+      ┌──────────┐   ┌──────┐ ┌──┐ ┌──────┐   ┌──────────┐
+      │ SQL text │   │SQLite│ │MG│ │Redis │   │ MQL obj  │
+      └──────────┘   └──────┘ └──┘ └──────┘   └──────────┘
+```
+
+### Pipeline
+
+1. **Parse** — SQL text → tokens → AST (hand-written recursive descent, zero deps)
+2. **Cache** — AST hash → cached SQL string (skip generation on repeated identical queries)
+3. **Translate** — AST → dialect-specific SQL or native commands
+4. **Execute** — Via driver: `bun:sqlite` (native), TCP + BSON (MongoDB), TCP + RESP (Redis)
+
+### Bidirectional example
+
+```typescript
+// Direction 1: SQL → MongoDB
+const mongo = new BunQL("mongodb://localhost/mydb");
+mongo.query("SELECT name FROM users WHERE age > 25 LIMIT 10");
+// Internal: SQL → AST → find({age:{$gt:25}},{projection:{name:1}}).limit(10)
+
+// Direction 2: MQL → SQLite
+const sqlite = new BunQL("./app.db");
+sqlite.mql("users").find({ age: { $gt: 25 } }).limit(10);
+// Internal: MQL → AST → SELECT name FROM users WHERE age > 25 LIMIT 10
+```
+
 ## Design Goals
 
-- **Minimal abstraction** — A thin, transparent layer over `bun:sqlite`. No magic. No ORM.
-- **Zero overhead writes** — `run()` is synchronous, direct to `bun:sqlite`. No queue, no retry, no Promise.
+- **One Query Language** — SQL or MQL, any backend. No context switching.
+- **Zero dependency drivers** — MongoDB, Redis drivers built from scratch. No npm bloat.
+- **Universal AST** — Single intermediate representation for all query languages.
 - **Statement format control** — `.raw()`, `.pluck()`, `.as()`, `.bind()`, `.iterate()` — full better-sqlite3 parity.
-- **Production-first** — Transaction safety (auto-rollback, SAVEPOINT, 3 lock modes). Error chains preserved (`error.cause`).
-- **Bun-native** — Uses `bun:sqlite`, `Bun.sleep()`, `Bun.file()`. No Node.js polyfills.
-- **Observability built-in** — Real-time metrics, statement cache stats, slow query logging, verbose SQL tracing.
+- **Production-first** — Transaction safety, error chains preserved, graceful shutdown.
+- **Bun-native** — `bun:sqlite`, `Bun.connect()`, `Bun.file()`, `Bun.sleep()`. No Node.js polyfills.
+- **Observability built-in** — Metrics, cache stats, slow query detection, verbose SQL tracing.
 
 ---
 
 ## When to Use
 
-- You need SQLite with a clean API for writes, transactions, FTS5, and statement format control.
+- You write SQL but need to query MongoDB or Redis.
+- You write MQL (MongoDB Query Language) but need to query SQLite or PostgreSQL.
+- You want **one API** that works across all your databases — dev uses SQLite, production uses PostgreSQL.
 - You want `.raw()` / `.pluck()` / `.iterate()` / `.as()` on prepared statements — better-sqlite3 parity.
-- You want serialized transactions without manual retry logic, with 3 lock modes.
-- You want `db.pragma()` convenience, `db.serialize()`, slow query detection, verbose tracing.
+- You want zero-dependency drivers — no `npm mongodb`, no `ioredis`.
+- You want auto-maintenance: scheduled WAL checkpoint, vacuum, backup.
 - You want a lightweight alternative to heavier database wrappers.
 - You need embedded storage for a Bun service, CLI tool, or single-process server.
 
@@ -105,11 +181,12 @@ await db.transaction(async (tx) => {
 
 | Scenario | Recommendation |
 |----------|---------------|
-| **High write throughput with true concurrency** | SQLite is single-writer. Use PostgreSQL/MySQL if you need parallel write scaling. |
+| **High write throughput with true write concurrency** | SQLite is single-writer. Use PostgreSQL/MySQL for parallel write scaling. |
 | **Multi-process access** | Use a client-server database, or coordinate via external locking. |
-| **Distributed systems** | SQLite is embedded, not networked. Use a network database. |
-| **ORM features needed** | Consider [Drizzle](https://orm.drizzle.team) or [Kysely](https://kysely.dev) with the `bun:sqlite` driver. |
-| **Node.js / Deno runtime** | bunql is Bun-only. Use `better-sqlite3` for Node.js. |
+| **Distributed systems** | SQLite is embedded, MongoDB/Redis/PG are networked. Choose based on your architecture. |
+| **Full ORM features needed** | Consider Drizzle or Kysely. bunql is a query engine, not an ORM. |
+| **Node.js / Deno runtime** | bunql is Bun-only. Use better-sqlite3 for Node.js, drizzle for Deno. |
+| **MongoDB advanced features** | `$geoNear`, `$text`, `$facet`, `$graphLookup` not covered — these are MongoDB-specific. |
 
 ---
 
@@ -352,6 +429,57 @@ await db.vacuum();
 // Incremental vacuum (non-blocking, page-at-a-time)
 const result = await db.vacuum({ incremental: true, pagesPerStep: 100 });
 console.log(`Reclaimed ${result.pagesReclaimed} pages`);
+```
+
+### Bidirectional: SQL on MongoDB
+
+Write SQL, bunql translates to MongoDB wire protocol:
+
+```typescript
+const mongo = new BunQL("mongodb://localhost:27017/mydb");
+
+// SQL written by developer — executed as MongoDB find() internally
+const users = mongo.query("SELECT name, email FROM users WHERE age > 25 LIMIT 10");
+// → find({age:{$gt:25}}, {projection:{name:1,email:1}}).limit(10)
+
+// INSERT SQL → insertOne
+mongo.run("INSERT INTO users (name, email) VALUES ('Alice', 'a@t.com')");
+// → insertOne({name:"Alice", email:"a@t.com"})
+
+// GROUP BY → MongoDB aggregation pipeline
+const stats = mongo.query(
+  "SELECT status, COUNT(*) as total FROM orders GROUP BY status"
+);
+// → aggregate([{$group:{_id:"$status", count:{$count:{}}}}])
+```
+
+### Bidirectional: MQL on SQLite
+
+Write MongoDB-style queries, runs on SQLite via translation:
+
+```typescript
+const sqlite = new BunQL("./app.db");
+
+// MongoDB-style find → SQL SELECT
+const users = sqlite.mql("users")
+  .find({ age: { $gt: 25 } })
+  .project({ name: 1, email: 1 })
+  .sort({ name: 1 })
+  .limit(10);
+
+// → SELECT name, email FROM users WHERE age > 25 ORDER BY name ASC LIMIT 10
+
+// MongoDB-style aggregate → SQL GROUP BY
+const stats = sqlite.mql("orders").aggregate([
+  { $group: { _id: "$status", count: { $count: {} } } },
+  { $sort: { count: -1 } },
+]);
+// → SELECT status, COUNT(*) as count FROM orders GROUP BY status ORDER BY count DESC
+
+// CRUD
+sqlite.mql("users").insertOne({ name: "Bob", email: "b@t.com" });
+sqlite.mql("users").updateOne({ _id: 1 }, { $set: { name: "Robert" } });
+sqlite.mql("users").deleteOne({ _id: 1 });
 ```
 
 ### Statement Format Control
@@ -688,32 +816,94 @@ const db = new BunQL("./app.db", {
 
 ## Architecture
 
+### Universal Query Engine
+
 ```
- ┌──────────────────────────────────────────────────────────┐
- │                      User Code                           │
- │  db.run()    db.query()    db.transaction()    raw       │
- │  (sync)      (sync)       (async)             (getter)   │
- └──────┬──────────┬──────────────┬───────────────┬─────────┘
-        │          │              │               │
-        ▼          ▼              ▼               ▼
- ┌──────────┐  ┌──────────┐  ┌──────────────┐  ┌──────────┐
- │ Statement│  │ Statement│  │ WriteQueue   │  │   raw    │
- │  Cache   │  │  Cache   │  │  (tx/batch/  │  │ (getter) │
- │ (LRU/100)│  │  (+pool) │  │   exec)      │  │  direct  │
- │          │  │          │  │  +SAVEPOINT  │  │  access  │
- └────┬─────┘  └────┬─────┘  └──────┬───────┘  └────┬─────┘
-      │             │               │               │
-      └─────────────┴───────────────┴───────────────┘
-                     │
-                     ▼
-            ┌─────────────────┐
-            │  bun:sqlite     │
-            │  (WAL mode)     │
-            │  + PRAGMA opts  │
-            └─────────────────┘
+                       ┌──────────────────────────┐
+                       │      Universal AST         │
+                       │   Select | Insert | Update │
+                       │   Delete | Aggregate       │
+                       └──────────┬───────────────┘
+                   ↗             │               ↖
+          sql-parser.ts    AST → backend      mql-parser.ts
+          (SQL → AST)      translators       (MQL → AST)
+              ↗             │    │    │         ↖
+      ┌──────────┐   ┌──────┐ ┌──┐ ┌──────┐   ┌──────────┐
+      │ SQL text │   │SQLite│ │MG│ │Redis │   │ MQL obj  │
+      └──────────┘   └──────┘ └──┘ └──────┘   └──────────┘
+                      to-sql  to-mongo  to-redis
 ```
 
-### Write Flow
+### SQLite (Raw API — production)
+
+```
+ User Code
+     │
+     ▼
+ ┌──────────────────────────────────────────────────┐
+ │  db.run()    db.query()    db.transaction()  raw  │
+ │  (sync)      (sync)       (async)          (get)  │
+ └──────┬──────────┬──────────────┬──────────────┬───┘
+        │          │              │              │
+        ▼          ▼              ▼              ▼
+ ┌──────────┐ ┌──────────┐ ┌────────────┐ ┌──────────┐
+ │Statement │ │Statement │ │ WriteQueue │ │   raw    │
+ │ Cache    │ │ Cache    │ │ tx/batch/  │ │  direct  │
+ │(LRU/100) │ │ (+pool)  │ │ exec       │ │  access  │
+ └────┬─────┘ └────┬─────┘ └─────┬──────┘ └────┬─────┘
+      │            │              │             │
+      └────────────┴──────────────┴─────────────┘
+                       │
+                       ▼
+              ┌─────────────────┐
+              │  bun:sqlite     │
+              │  + WAL + PRAGMA │
+              └─────────────────┘
+```
+
+### Pipeline: SQL on MongoDB (future)
+
+```
+User: db.query("SELECT name FROM users WHERE age > 25 LIMIT 10")
+  │
+  ▼
+sql-parser.ts  →  AST  →  to-mongodb.ts  →  MongoCommand
+  │                    │                        │
+  │                    │                        ▼
+  │                    │              { collection: "users",
+  │                    │                method: "find",
+  │                    │                args: [{age:{$gt:25}}, {projection:{name:1},limit:10}] }
+  │                    │
+  │              Cache layers:
+  │              1. AST hash → SQL string (skip generation)
+  │              2. SQL string → compiled stmt (StatementCache LRU/100)
+  │              3. SQL string → MongoCommand (skip translation)
+  ▼
+Bun.connect() TCP → MongoDB server → BSON decoded → rows
+```
+
+### Pipeline: MQL on SQLite (future)
+
+```
+User: db.mql("users").find({age:{$gt:25}}).project({name:1}).limit(10)
+  │
+  ▼
+mql-parser.ts  →  AST  →  to-sql.ts  →  "SELECT name FROM users WHERE age > ? LIMIT 10"
+  │                    │                         │
+  │                    │                         ▼
+  │                    │               StatementCache.get(sql)
+  │                    │                         │
+  │                    │                         ▼
+  │                    │               stmt.all(25) → rows
+  │                    │
+  │              Cache layers:
+  │              1. AST hash → SQL string
+  │              2. SQL string → compiled BunStatement
+  ▼
+return rows  ← identical format regardless of backend
+```
+
+### Write Flow (SQLite)
 
 `run()` is **synchronous** — direct to `bun:sqlite` via statement cache. No WriteQueue, no Promise, no retry:
 
@@ -724,16 +914,12 @@ db.run(sql, params)
   → return { changes, lastInsertRowid }
 ```
 
-### Read Flow
-
-`query()` also bypasses WriteQueue — synchronous read via statement cache. When `readerPool > 0`, reads route through **ReaderPool** (round-robin across read-only connections) for parallel-safe concurrent reads.
-
-### Transaction Flow
+### Transaction Flow (SQLite)
 
 `transaction()`, `batch()`, `exec()` go through **WriteQueue** — the only operations that need serialization:
 
 1. Enter WriteQueue (serialized execution order)
-2. `BEGIN IMMEDIATE` (default; configurable to `DEFERRED` / `EXCLUSIVE` via mode option)
+2. `BEGIN IMMEDIATE` (default; configurable to `DEFERRED` / `EXCLUSIVE` via mode)
 3. Callback receives `TransactionContext` with `run()` / `query()` / `batch()` / `prepare()`
 4. Success → `COMMIT`. Failure → `ROLLBACK` (original error re-thrown directly, no wrapper)
 5. Nested transactions use SQLite **SAVEPOINT** for isolation
@@ -742,13 +928,17 @@ db.run(sql, params)
 
 | Decision | Rationale |
 |----------|-----------|
-| Single DB connection | SQLite is single-writer. Multiple connections don't help writes. |
-| WAL mode default | Enables concurrent reads during writes. |
+| Universal AST | Single IR for all query languages — enables bidirectional SQL↔NoSQL translation |
+| Hand-written parsers | SQL/MQL parsers built from scratch — zero dependencies, < 900 LOC total |
+| Custom drivers | MongoDB/Redis drivers built with `Bun.connect()` — zero npm deps, minimal bundle |
+| SQLite: single DB connection | SQLite is single-writer. Multiple connections don't help writes. |
 | `run()` is sync | `bun:sqlite` is sync — wrapping with Promise adds overhead for no benefit. |
 | WriteQueue only for tx/batch | Transactions need serialization (BEGIN→COMMIT). Writes don't. |
-| 3 transaction modes | `deferred` / `immediate` / `exclusive` — match SQLite's lock semantics. Default: `immediate`. |
+| 3 transaction modes | `deferred` / `immediate` / `exclusive` — match SQLite's lock semantics. |
 | Reads bypass queue | Reads execute directly — never blocked by writes. |
-| `raw` getter exposed | Users need escape hatch for PRAGMA kustom, VACUUM, dll. |
+| Dual API (SQL + MQL) | Developer chooses query language. Backend handles translation. |
+| 3-level cache | AST hash → SQL string → compiled stmt. Near-raw speed on cache hit. |
+| `raw` getter exposed | Direct access to `bun:sqlite` Database for PRAGMA, VACUUM, etc. |
 | Original error preserved | Transaction errors re-thrown directly, no wrapper. |
 
 ---
@@ -766,8 +956,10 @@ db.run(sql, params)
 | Prepared stmts | Manual manage | Auto-cached, reused + `.bind()` + `.iterate()` |
 | PRAGMA calls | `db.run("PRAGMA key")` | `db.pragma("key", { simple: true })` |
 | Serialization | Manual | `db.serialize()` + `BunQL.deserialize()` |
+| Serialization | Manual | `db.serialize()` + `BunQL.deserialize()` |
 | Graceful shutdown | Manual | Drain pending ops + cache finalize |
-| Bundle size | Built-in | +42.4KB core / +5.1KB server |
+| Backend support | SQLite only | SQLite + MongoDB + Redis + PostgreSQL + MySQL — one query language |
+| Bundle size | Built-in | +41.7KB core / +5.1KB server |
 
 bunql is not a replacement for `bun:sqlite` — it's an **ergonomic layer** on top. You still write raw SQL. The wrapper handles what `bun:sqlite` leaves bare: transactions, statement lifecycle, observability, graceful shutdown.
 
@@ -932,10 +1124,20 @@ try {
 
 ## Limitations
 
-- **SQLite single-writer** — `run()` is synchronous, matching `bun:sqlite` directly. Peak throughput depends on PRAGMA settings. With `synchronous=NORMAL`, `cache_size=-2000`, and statement cache, typical hardware achieves **35-42K writes/s**. Using `synchronous=FULL` (SQLite default) reduces this significantly.
+### SQLite
+- **SQLite single-writer** — `run()` is synchronous, matching `bun:sqlite` directly. Peak throughput: **35-42K writes/s** with `synchronous=NORMAL`. Using `synchronous=FULL` reduces this significantly.
 - **Fixed-size statement cache** — Max 100 cached statements. Highly diverse workloads trigger evictions.
 - **Single-process only** — Not designed for multi-process writes to the same SQLite file.
-- **Not an ORM** — No schema management, query building, or migrations. You write SQL.
+
+### Query Engine (MongoDB/Redis/PG/MySQL)
+- **SQL → MongoDB coverage**: Full CRUD, WHERE/JOIN/GROUP BY/ORDER BY/LIMIT. Does NOT cover `$geoNear`, `$text`, `$facet`, `$graphLookup`.
+- **MQL → SQL coverage**: `find`, `aggregate` with `$match`/`$group`/`$sort`/`$limit`/`$lookup`. Does NOT cover `$unwind` (SQLite doesn't have UNNEST), `$sample`, nested sub-document updates.
+- **Redis coverage**: Subset only — `HGETALL`, `HSET`, `DEL`, `ZRANGE`. Complex queries (GROUP BY, JOIN) not supported on Redis.
+- **Drivers in development**: MongoDB (v0.4.1), Redis (v0.4.2). Currently only SQLite driver is production-ready.
+
+### General
+- **Not an ORM** — No schema management, query building, or migrations. You write SQL/MQL.
+- **Bun-only** — Not compatible with Node.js or Deno.
 
 ---
 
@@ -1005,13 +1207,17 @@ Write operations via the `/run` endpoint are synchronous (direct to `bun:sqlite`
 
 ## Stability
 
-- **v0.3.0 (stable)** — BREAKING: expanded Statement API (15 methods), transaction modes, pragma helper
-- **138 tests** — unit, integration, concurrency, stress, FTS5, reader pool, statement features
+- **v0.4.0-dev (in development)** — Universal AST + SQL parser + MQL parser + bidirectional translators
+- **v0.3.0 (stable)** — Statement format control, transaction modes, pragma helper, serialize, verbose mode
+- **182 tests** — unit, integration, concurrency, stress, FTS5, reader pool, statement features, parser, translators
 - **5000 sequential writes** — verified stable
 - **Graceful shutdown** — drain queue → finalize statements → close DB
 - **Memory safe** — LRU cache eviction, `yocto-queue` linked-list, no unbounded growth
 - **Retry strategy** — exponential backoff with ±50% jitter (baseDelay 50ms)
-- **Observability** — built-in metrics counters, cache stats, WAL monitoring
+- **Zero-dependency drivers** — MongoDB (TCP + BSON), Redis (TCP + RESP) built from scratch
+- **Hand-written parsers** — SQL parser (recursive descent), MQL parser (object traversal), no parser libraries
+- **Observability** — built-in metrics counters, cache stats, WAL monitoring, slow query detection, verbose tracing
+- **Bundle** — 41.7KB core, 5.1KB server, +18-25KB for query builder (future)
 
 ---
 
