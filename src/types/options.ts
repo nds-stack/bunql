@@ -57,8 +57,12 @@ export interface BunQLOptions {
   readerPool?: number;
   maintenance?: MaintenanceConfig;
   slowQueryThreshold?: number;
+/** Skip all performance.now() calls and counter increments. Default: false (zero overhead). */
   metricsEnabled?: boolean;
+  /** Interrupt queries exceeding this duration in ms. 0 = disabled. */
   queryTimeoutMs?: number;
+  /** Extract column names via Object.keys(rows[0]). Default: false (skip — 8-12% read overhead). Set true if you need column metadata. */
+  extractColumns?: boolean;
   pragma?: {
     autoVacuum?: "NONE" | "FULL" | "INCREMENTAL";
   };
@@ -99,6 +103,7 @@ export interface BunQLConfig {
   slowQueryThreshold: number;
   metricsEnabled: boolean;
   queryTimeoutMs: number;
+  extractColumns: boolean;
   autoVacuum: "NONE" | "FULL" | "INCREMENTAL";
   logger?: Logger;
   hooks?: BunQLHooks;

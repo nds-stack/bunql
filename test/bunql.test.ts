@@ -30,7 +30,7 @@ describe("BunQL", () => {
   });
 
   test("query returns rows and columns", async () => {
-    const db = new BunQL(dbPath);
+    const db = new BunQL(dbPath, { extractColumns: true });
 
     db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
     db.run("INSERT INTO test VALUES (1, 'hello')");
@@ -262,7 +262,7 @@ describe("BunQL", () => {
   });
 
   test("metrics tracks writes, reads, and transactions", async () => {
-    const db = new BunQL(dbPath);
+    const db = new BunQL(dbPath, { metricsEnabled: true });
 
     const m0 = db.metrics;
     expect(m0.writes.total).toBe(0);
@@ -283,7 +283,7 @@ describe("BunQL", () => {
   });
 
   test("metrics tracks writes and reads", async () => {
-    const db = new BunQL(dbPath);
+    const db = new BunQL(dbPath, { metricsEnabled: true });
 
     db.run("CREATE TABLE metrics_test (id INTEGER PRIMARY KEY, val TEXT)");
 

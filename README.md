@@ -354,7 +354,8 @@ new BunQL(path: string, options?: BunQLOptions)
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `wal` | `boolean` | `true` | Enable WAL journal mode |
-| `metricsEnabled` | `boolean` | `true` | Enable performance counters and timing. Set `false` to skip `performance.now()` overhead. |
+| `metricsEnabled` | `boolean` | `false` | Enable performance counters and timing. Set `true` to track writes/reads/durationMs. |
+| `extractColumns` | `boolean` | `false` | Extract column names via `Object.keys(rows[0])`. Set `true` if you need column metadata. |
 | `queryTimeoutMs` | `number` | `0` | Interrupt queries exceeding this duration. `0` = disabled. |
 | `busyTimeout` | `number` | `5000` | SQLite busy timeout (ms) |
 | `synchronous` | `'OFF' \| 'NORMAL' \| 'FULL' \| 'EXTRA'` | `'NORMAL'` | Synchronous mode (NORMAL recommended for WAL) |
