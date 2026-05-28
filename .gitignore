@@ -46,4 +46,3 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 !CHANGELOG.md
 # Deno lockfile
 deno.lock
-# Environment.env

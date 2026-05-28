@@ -83,7 +83,7 @@ export function createHandler(bunql: BunQL, options: ServerOptions): (req: Reque
           if (op.sql?.toLowerCase().startsWith("select")) {
             results.push(tx.query(op.sql, op.params));
           } else {
-            results.push(await tx.run(op.sql, op.params));
+            results.push(tx.run(op.sql, op.params));
           }
         }
         return results;

@@ -803,7 +803,7 @@ import { BunQL } from "@nds-stack/bunql";
 import { BunQLServer } from "@nds-stack/bunql/server";
 
 const db = new BunQL("./app.db");
-const server = new BunQLServer(db, { port: 3000, secret: "my-api-key" });
+const server = new BunQLServer(db, { port: 3000, auth: { apiKey: "my-api-key" } });
 server.start();
 // → HTTP endpoint: http://localhost:3000
 //   - read/query routes: direct — no queue
