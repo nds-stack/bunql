@@ -24,8 +24,11 @@
 - [API](#api)
 - [Architecture](#architecture)
 - [Compared to Raw bun:sqlite](#compared-to-raw-bunsqlite)
+- [Customization](#customization)
 - [Benchmarks](#benchmarks)
+- [Error Handling](#error-handling)
 - [Limitations](#limitations)
+- [Multi-Instance / Cross-Process](#multi-instance--cross-process)
 - [Stability](#stability)
 - [License](#license)
 
@@ -548,9 +551,63 @@ const db = new BunQL("./app.db", {
 | Reads | Direct | Cached (LRU, max 100) |
 | Prepared stmts | Manual manage | Auto-cached, reused |
 | Graceful shutdown | Manual | Queue drain + cache finalize |
-| Bundle size | Built-in | +32.4KB core / +5.0KB server |
+| Bundle size | Built-in | +33.2KB core / +5.0KB server |
 
 bunql is not a replacement for `bun:sqlite` — it's a **safety layer** on top. You still write raw SQL. The wrapper handles what developers consistently get wrong: concurrency, error recovery, and resource cleanup.
+
+---
+
+## Customization
+
+### Logger
+
+Provide any `console`-compatible logger. Defaults to `console`:
+
+```typescript
+const db = new BunQL("./app.db", {
+  logger: {
+    log: (...args) => myLogger.info(args),
+    warn: (...args) => myLogger.warn(args),
+    error: (...args) => myLogger.error(args),
+  },
+});
+```
+
+### Lifecycle Hooks
+
+Monitor write operations without modifying business logic:
+
+```typescript
+const db = new BunQL("./app.db", {
+  hooks: {
+    beforeWrite: (sql) => trace.start("db_write", { sql }),
+    afterWrite: (sql, _params, ms) => trace.end("db_write", { duration: ms }),
+    beforeTransaction: () => console.log("TX starting"),
+    afterTransaction: (success) => console.log(`TX ${success ? "committed" : "rolled back"}`),
+  },
+});
+```
+
+### Events
+
+React to runtime conditions:
+
+```typescript
+const db = new BunQL("./app.db", {
+  retry: { maxRetries: 5, baseDelay: 50 },
+  slowQueryThreshold: 100,
+  events: {
+    onBusy: (attempt, delayMs) => metrics.increment("db_busy"),
+    onDrain: () => console.log("Write queue empty"),
+    onError: (err) => sentry.captureException(err),
+    onSlowQuery: (sql, ms) => console.warn(`Slow query (${ms}ms):`, sql),
+  },
+});
+```
+
+### Statement Cache Tuning
+
+The LRU cache holds up to 100 prepared statements. No config knob — the limit is deliberate to prevent unbounded growth. Highly diverse query patterns may trigger evictions; if you consistently see low hit rates in `cacheStats`, consider caching frequently-used queries at the application level.
 
 ---
 
@@ -581,6 +638,39 @@ Results may vary ±30% between runs due to system load and disk caching.
 
 ---
 
+## Error Handling
+
+Errors in bunql follow a typed hierarchy. The original error is always preserved via `cause` — no swallowed errors:
+
+```
+BunQLError (base)
+├── BusyError         — SQLITE_BUSY / SQLITE_BUSY_SNAPSHOT after retries exhausted
+├── TransactionError  — Transaction scope failure (nested SAVEPOINT, etc.)
+├── QueueError        — WriteQueue internal failure (closed queue, drain timeout)
+└── ConnectionError   — Database open/close failure, invalid path, WAL requirement
+```
+
+```typescript
+import { BunQL, BusyError, ConnectionError } from "@nds-stack/bunql";
+
+try {
+  await db.run("INSERT INTO logs (msg) VALUES (?)", ["hello"]);
+} catch (err) {
+  if (err instanceof BusyError) {
+    console.error("Database busy after retries:", err.cause);
+    // Retry later or fail gracefully
+  } else if (err instanceof ConnectionError) {
+    console.error("Broken connection:", err.message);
+  } else {
+    throw err; // Unexpected error — re-throw
+  }
+}
+```
+
+**Transaction errors are re-thrown directly** (v0.1.0+). The callback error is no longer wrapped in `TransactionError`. The transaction is rolled back, and the original error propagates to the caller.
+
+---
+
 ## Limitations
 
 - **SQLite single-writer** — bunql queues writes, but peak throughput depends on PRAGMA settings. With `synchronous=NORMAL`, `cache_size=-2000`, and statement cache, typical hardware achieves **18-30K writes/s**. Using `synchronous=FULL` (SQLite default) reduces this significantly.
@@ -590,9 +680,71 @@ Results may vary ±30% between runs due to system load and disk caching.
 
 ---
 
+## Multi-Instance / Cross-Process
+
+SQLite is an embedded, single-writer database. bunql does not coordinate across processes.
+
+### Same Process, Multiple Instances
+
+Creating multiple `BunQL` instances pointing to the same database file (same process, separate instances) is **not recommended**. Each instance has its own `WriteQueue` and `StatementCache` — they do not share state. SQLite itself handles concurrent connections, but the wrapper's queues operate independently, defeating the purpose of serialized writes.
+
+**Instead:** Create a single `BunQL` instance and share it across your application:
+
+```typescript
+// app.ts — export once, import everywhere
+export const db = new BunQL("./app.db");
+
+// services/user.ts
+import { db } from "../app";
+
+// services/logs.ts
+import { db } from "../app";
+```
+
+### Worker Threads / Cluster
+
+Bun workers can share a `BunQL` instance via `workerData`:
+
+```typescript
+// main.ts
+const db = new BunQL("./app.db");
+const worker = new Worker("./worker.ts", { workerData: { db } });
+```
+
+### Multiple Processes (External Access)
+
+If another process (e.g., a Node.js app, CLI tool, or separate Bun process) opens the same SQLite file, bunql cannot serialize those writes. The external writer may trigger `SQLITE_BUSY`:
+
+```typescript
+const db = new BunQL("./app.db", {
+  retry: { maxRetries: 10, baseDelay: 100 },  // Higher tolerance for external contention
+  busyTimeout: 10000,  // SQLite-level busy timeout
+});
+```
+
+For multi-process scenarios, consider using a client-server database (PostgreSQL, MySQL) instead.
+
+### Server-Side (BunQLServer)
+
+The HTTP bridge (`bunql/server`) is a single-instance server:
+
+```typescript
+import { BunQL } from "@nds-stack/bunql";
+import { BunQLServer } from "@nds-stack/bunql/server";
+
+const db = new BunQL("./app.db");
+const server = new BunQLServer(db, { port: 3000, secret: "my-api-key" });
+server.start();
+// → HTTP endpoint: http://localhost:3000 — serialized through one BunQL instance
+```
+
+Each HTTP request enters the same `WriteQueue`, ensuring serialized writes across all API consumers.
+
+---
+
 ## Stability
 
-- **v0.1.0 (stable)** — first stable release
+- **v0.1.1 (stable)** — patch release
 - **111 tests** — unit, integration, concurrency, stress, FTS5, reader pool
 - **5000 sequential writes** — verified stable
 - **Graceful shutdown** — drain queue → finalize statements → close DB
