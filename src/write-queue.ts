@@ -52,17 +52,17 @@ export class WriteQueue {
       );
     }
 
-    return new Promise<T>((resolve, reject) => {
-      this.#items.enqueue({ execute, resolve: resolve as (value: unknown) => void, reject });
-      this.#totalEnqueued++;
-      if (this.#items.size > this.#peakSize) {
-        this.#peakSize = this.#items.size;
-      }
-      if (!this.#processing) {
-        this.#processing = true;
-        queueMicrotask(() => this.#process());
-      }
-    });
+    const { promise, resolve, reject } = Promise.withResolvers<T>();
+    this.#items.enqueue({ execute, resolve: resolve as (value: unknown) => void, reject });
+    this.#totalEnqueued++;
+    if (this.#items.size > this.#peakSize) {
+      this.#peakSize = this.#items.size;
+    }
+    if (!this.#processing) {
+      this.#processing = true;
+      queueMicrotask(() => this.#process());
+    }
+    return promise;
   }
 
   async drain(): Promise<void> {
@@ -70,9 +70,9 @@ export class WriteQueue {
       return;
     }
     if (!this.#drainPromise) {
-      this.#drainPromise = new Promise((resolve) => {
-        this.#drainResolve = resolve;
-      });
+      const { promise, resolve } = Promise.withResolvers<void>();
+      this.#drainPromise = promise;
+      this.#drainResolve = resolve;
     }
     return this.#drainPromise;
   }
