@@ -646,10 +646,10 @@ The LRU cache holds up to 100 prepared statements. No config knob — the limit 
 
 | Operation | `bun:sqlite` raw | Manual retry | `better-sqlite3` 12 | `sqlite3` 6.0 | `node:sqlite` | Deno SQLite | `sql.js` WASM | **BunQL** |
 |-----------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Point read | 367K | 325K | 280K | 21.1K | 214K | 99.5K | 37.5K | 246K |
-| Single write | 38.4K | 36.4K | 39.0K | 13.6K | 16.8K | 25.0K | 13.0K | **38.7K** |
-| 10 concurrent | 43.5K | 68.2K | 33.3K | — | 10.5K | 44.5K | — | **55.7K** |
-| 50 concurrent | 36.7K | 30.1K | 25.5K | — | 14.2K | 23.4K | — | 28.9K |
+| Point read | 268K | 321K | 256K | 23.9K | 246K | 124K | 37.3K | **259K** |
+| Single write | 38.4K | 45.7K | 35.5K | 14.5K | 37.6K | 34.8K | 13.0K | **41.9K** |
+| 10 concurrent | 56.1K | 71.0K | 38.3K | — | 31.4K | 48.4K | — | **51.8K** |
+| 50 concurrent | 28.8K | 29.1K | 31.1K | — | 34.2K | 35.0K | — | **39.9K** |
 
 > `sqlite3@6.0.1` is callback-based — serialized async queue. Read/Write measured via callback completion. `sql.js` is WASM single-threaded. Both excluded from concurrent tests.
 >
