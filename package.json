@@ -1,6 +1,6 @@
 {
   "name": "@nds-stack/bunql",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Lightweight SQLite wrapper for Bun — queued writes, serialized transactions, SQLITE_BUSY handling",
   "author": "nds-stack <nds.stack@gmail.com>",
   "type": "module",

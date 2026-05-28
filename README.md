@@ -750,7 +750,7 @@ Each HTTP request enters the same `WriteQueue`, ensuring serialized writes acros
 
 ## Stability
 
-- **v0.1.2 (stable)** — documentation improvements
+- **v0.1.3 (stable)** — bug fixes from audit
 - **111 tests** — unit, integration, concurrency, stress, FTS5, reader pool
 - **5000 sequential writes** — verified stable
 - **Graceful shutdown** — drain queue → finalize statements → close DB
