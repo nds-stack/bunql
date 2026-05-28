@@ -121,6 +121,14 @@ export class BunQL {
       );
     }
 
+    if (path.startsWith("mysql://") || path.startsWith("mariadb://")) {
+      throw new Error(
+        "MySQL driver is available as MySQLDriver: " +
+        `import { MySQLDriver } from "@nds-stack/bunql/driver"; ` +
+        `const db = new MySQLDriver("${path}");`,
+      );
+    }
+
     const config = this.#resolveConfig(options);
     this.#config = config;
     this.#logger = config.logger;
