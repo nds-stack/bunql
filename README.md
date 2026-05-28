@@ -80,7 +80,7 @@ await db.transaction(async (tx) => {
 
 ## When to Use
 
-- You need SQLite with concurrent writes from a Bun application.
+- You need SQLite with a clean API for writes, transactions, and FTS5.
 - You want serialized transactions without manual retry logic.
 - You want a lightweight alternative to heavier database wrappers.
 - You need embedded storage for a Bun service, CLI tool, or single-process server.
@@ -172,7 +172,7 @@ const writes = Array.from({ length: 100 }, (_, i) =>
   db.run("INSERT INTO logs (message) VALUES (?)", [`event-${i}`])
 );
 await Promise.all(writes);
-// All 100 writes succeed, serialized by the queue.
+// All 100 writes succeed — synchronous, sequential execution.
 ```
 
 ### Transaction with Error Recovery
@@ -509,38 +509,43 @@ const db = new BunQL("./app.db", {
 ```
  ┌──────────────────────────────────────────────────────────┐
  │                      User Code                           │
- │  db.query()  db.run()  db.exec()  db.transaction()  raw  │
- └──────┬──────────┬──────────┬───────────────┬─────────────┘
-        │          │          │               │
-        ▼          ▼          ▼               ▼
- ┌──────────┐  ┌────────────┐  ┌──────────────┐  ┌──────────┐
- │ Statement │  │ WriteQueue │  │ Transaction  │  │   raw    │
- │  Cache   │  │  (FIFO)   │  │   Manager    │  │ (getter) │
- │ (LRU/100)│  │ (O(1)     │  │  +SAVEPOINT  │  │  direct  │
- │          │  │  deque)   │  │              │  │  access  │
- └────┬─────┘  └─────┬──────┘  └──────┬───────┘  └────┬─────┘
-      │              │                │               │
-      └──────────────┴────────────────┴───────────────┘
-                     │
-                     ▼
-            ┌─────────────────┐
-            │  bun:sqlite     │
-            │  (WAL mode)     │
-            │  + PRAGMA opts  │
-            └─────────────────┘
+ │  db.run()    db.query()    db.transaction()    raw       │
+ │  (sync)      (sync)       (async)             (getter)   │
+ └──────┬──────────┬──────────────┬───────────────┬─────────┘
+        │          │              │               │
+        ▼          ▼              ▼               ▼
+ ┌──────────┐  ┌──────────┐  ┌──────────────┐  ┌──────────┐
+ │ Statement│  │----------│  │ WriteQueue   │  │   raw    │
+ │  Cache   │  │ NO QUEUE │  │  (tx/batch/  │  │ (getter) │
+ │ (LRU/100)│  │   NO     │  │   exec)      │  │  direct  │
+ │          │  │  RETRY   │  │  +SAVEPOINT  │  │  access  │
+ └────┬─────┘  └──────────┘  └──────┬───────┘  └────┬─────┘
+      │                             │               │
+      │                             ▼               │
+      │                    ┌─────────────────┐      │
+      └────────────────────│  bun:sqlite     │──────┘
+                           │  (WAL mode)     │
+                           │  + PRAGMA opts  │
+                           └─────────────────┘
 ```
 
 ### Write Flow
 
-1. `run()` enqueues operation into **WriteQueue** (FIFO)
-2. Queue processes one operation at a time (microtask-deferred)
-3. Each write passes through **RetryPolicy** (exponential backoff for SQLITE_BUSY)
-4. Retries exhausted → `BusyError` with original error as `cause`
+`run()` is **synchronous** — direct to `bun:sqlite` via statement cache. No WriteQueue, no Promise, no retry:
+
+```
+db.run(sql, params)
+  → StatementCache.get(sql)
+  → stmt.run(params)
+  → return { changes, lastInsertRowid }
+```
 
 ### Transaction Flow
 
-1. `transaction()` enters WriteQueue (serialized with writes)
-2. `BEGIN IMMEDIATE` — prevents concurrent writers
+`transaction()`, `batch()`, `exec()` go through **WriteQueue** — the only operations that need serialization:
+
+1. Enter WriteQueue (serialized execution order)
+2. `BEGIN IMMEDIATE` — prevents overlapping transactions
 3. Callback receives `TransactionContext` with `run()` / `query()` / `batch()` / `prepare()`
 4. Success → `COMMIT`. Failure → `ROLLBACK` (original error re-thrown directly, no wrapper)
 5. Nested transactions use SQLite **SAVEPOINT** for isolation
@@ -551,10 +556,10 @@ const db = new BunQL("./app.db", {
 |----------|-----------|
 | Single DB connection | SQLite is single-writer. Multiple connections don't help writes. |
 | WAL mode default | Enables concurrent reads during writes. |
+| `run()` is sync | `bun:sqlite` is sync — wrapping with Promise adds overhead for no benefit. |
+| WriteQueue only for tx/batch | Transactions need serialization (BEGIN→COMMIT). Writes don't. |
 | Reads bypass queue | Reads execute directly — never blocked by writes. |
 | `raw` getter exposed | Users need escape hatch for PRAGMA kustom, VACUUM, dll. |
-| Linked-list queue | `yocto-queue` untuk O(1) dequeue, bukan `Array.shift()` O(n). |
-| Microtask-deferred queue | All synchronous enqueues complete before processing starts. |
 | Original error preserved | Transaction errors re-thrown directly, no wrapper. |
 
 ---
@@ -653,21 +658,19 @@ The LRU cache holds up to 100 prepared statements. No config knob — the limit 
 
 > `sqlite3@6.0.1` is callback-based — serialized async queue. Read/Write measured via callback completion. `sql.js` is WASM single-threaded. Both excluded from concurrent tests.
 >
-> `better-sqlite3` and `node:sqlite` are **synchronous blocking** APIs — writes execute sequentially on the main thread via `setImmediate` scheduling. No true concurrency occurs (no overlap, no SQLITE_BUSY). Concurrent numbers reflect event loop overhead, not parallel throughput. Compare with `bun:sqlite` (raw) and Manua
-
-l retry for fair async concurrency benchmarks.
+> `better-sqlite3` and `node:sqlite` are **synchronous blocking** APIs — writes execute sequentially on the main thread via `setImmediate` scheduling. No true concurrency occurs (no overlap, no SQLITE_BUSY). Concurrent numbers reflect event loop overhead, not parallel throughput. Compare with `bun:sqlite` (raw) and Manual retry for fair async concurrency benchmarks.
 >
 > Concurrent writes use manual retry loop (max 5 attempts, exponential backoff). BunQL eliminates manual retry — writes are serialized, reads are parallel.
 >
 > **Hardware matters.** Official better-sqlite3 benchmark reports 314K read / 62.6K write on macOS (SSD). Our 294K / 40.8K on Windows NVMe is consistent — macOS I/O stack has lower `fsync` latency for SQLite commits.
 
-### Realistic Workloads
+### Realistic Workloads (BunQL only)
 
 | Workload | Description | Throughput |
 |----------|-------------|-----------|
-| Mixed | 167r + 167w + 166tx | 32.6K ops/s |
-| Batch | 500 writes in 2.3ms | 217K ops/s |
-| Cache pressure | 200 unique queries (triggers evictions) | 32.9K ops/s |
+| Mixed | 167r + 167w + 166tx | 22.4K ops/s |
+| Batch | 500 writes in single batch call | 82.9K ops/s |
+| Cache pressure | 200 unique queries (triggers LRU evictions) | 23.2K ops/s |
 
 ---
 
@@ -706,7 +709,7 @@ try {
 
 ## Limitations
 
-- **SQLite single-writer** — bunql queues writes, but peak throughput depends on PRAGMA settings. With `synchronous=NORMAL`, `cache_size=-2000`, and statement cache, typical hardware achieves **18-30K writes/s**. Using `synchronous=FULL` (SQLite default) reduces this significantly.
+- **SQLite single-writer** — `run()` is synchronous, matching `bun:sqlite` directly. Peak throughput depends on PRAGMA settings. With `synchronous=NORMAL`, `cache_size=-2000`, and statement cache, typical hardware achieves **35-42K writes/s**. Using `synchronous=FULL` (SQLite default) reduces this significantly.
 - **Fixed-size statement cache** — Max 100 cached statements. Highly diverse workloads trigger evictions.
 - **Single-process only** — Not designed for multi-process writes to the same SQLite file.
 - **Not an ORM** — No schema management, query building, or migrations. You write SQL.
@@ -719,7 +722,7 @@ SQLite is an embedded, single-writer database. bunql does not coordinate across 
 
 ### Same Process, Multiple Instances
 
-Creating multiple `BunQL` instances pointing to the same database file (same process, separate instances) is **not recommended**. Each instance has its own `WriteQueue` and `StatementCache` — they do not share state. SQLite itself handles concurrent connections, but the wrapper's queues operate independently, defeating the purpose of serialized writes.
+Creating multiple `BunQL` instances pointing to the same database file (same process, separate instances) is **not recommended**. Each instance has its own `StatementCache` — they do not share state. SQLite itself handles concurrent connections, but the caches operate independently.
 
 **Instead:** Create a single `BunQL` instance and share it across your application:
 
