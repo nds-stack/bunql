@@ -1,11 +1,14 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.4] - 2026-05-28
 
 ### Added
 - `runSync()` / `querySync()` — synchronous fast path bypassing queue, retry, and hooks for max throughput
 - `metricsEnabled` option (default `true`) — disable `performance.now()` and counters to reduce overhead
 - `queryTimeoutMs` option (default `0` = disabled) — interrupts long-running queries via `db.interrupt()`
+
+### Fixed
+- Timer leak in `query()` — `clearTimeout` now in `try/finally` block, preventing spurious `SQLITE_INTERRUPT`
 
 ## [0.1.3] - 2026-05-28
 
