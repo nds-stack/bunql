@@ -71,10 +71,10 @@ await db.transaction(async (tx) => {
 ## Design Goals
 
 - **Minimal abstraction** — A thin, transparent layer over `bun:sqlite`. No magic. No ORM.
-- **Zero-config concurrency** — Writes are queued, reads are parallel. Out of the box.
-- **Production-first** — Error chains preserved (`error.cause`). Retry with backoff. Graceful shutdown.
-- **Bun-native** — Uses `bun:sqlite`, `Bun.sleep()`, `queueMicrotask`. No Node.js polyfills.
-- **Single-file mental model** — One `BunQL` instance, one database connection. Predictable behavior.
+- **Zero overhead writes** — `run()` is synchronous, direct to `bun:sqlite`. No queue, no retry, no Promise.
+- **Production-first** — Transaction safety (auto-rollback, SAVEPOINT). Error chains preserved (`error.cause`).
+- **Bun-native** — Uses `bun:sqlite`, `Bun.sleep()`, `Bun.file()`. No Node.js polyfills.
+- **Observability built-in** — Real-time metrics, statement cache stats, slow query logging.
 
 ---
 
@@ -563,15 +563,15 @@ const db = new BunQL("./app.db", {
 | Aspect | `bun:sqlite` | `@nds-stack/bunql` |
 |--------|-------------|-------------------|
 | API surface | Low-level, direct | Same SQL, added convenience |
-| Write concurrency | Manual retry needed | Automatic queue + retry |
-| Transactions | Manual BEGIN/COMMIT | Scoped callbacks with auto-rollback |
+| Write path | `stmt.run()` (sync C binding) | `db.run()` (sync, cached statement) |
+| Transactions | Manual BEGIN/COMMIT | Scoped callbacks with auto-rollback + SAVEPOINT |
 | Error handling | Raw SQLite errors | Typed `BunQLError` hierarchy; original errors preserved |
 | Reads | Direct | Cached (LRU, max 100) |
 | Prepared stmts | Manual manage | Auto-cached, reused |
-| Graceful shutdown | Manual | Queue drain + cache finalize |
-| Bundle size | Built-in | +33.2KB core / +5.0KB server |
+| Graceful shutdown | Manual | Drain pending ops + cache finalize |
+| Bundle size | Built-in | +34.4KB core / +5.1KB server |
 
-bunql is not a replacement for `bun:sqlite` — it's a **safety layer** on top. You still write raw SQL. The wrapper handles what developers consistently get wrong: concurrency, error recovery, and resource cleanup.
+bunql is not a replacement for `bun:sqlite` — it's an **ergonomic layer** on top. You still write raw SQL. The wrapper handles what `bun:sqlite` leaves bare: transactions, statement lifecycle, observability, graceful shutdown.
 
 ---
 
@@ -593,30 +593,34 @@ const db = new BunQL("./app.db", {
 
 ### Lifecycle Hooks
 
-Monitor write operations without modifying business logic:
+Transaction-level hooks for monitoring:
 
 ```typescript
 const db = new BunQL("./app.db", {
   hooks: {
-    beforeWrite: (sql) => trace.start("db_write", { sql }),
-    afterWrite: (sql, _params, ms) => trace.end("db_write", { duration: ms }),
     beforeTransaction: () => console.log("TX starting"),
     afterTransaction: (success) => console.log(`TX ${success ? "committed" : "rolled back"}`),
   },
 });
 ```
 
+Note: `beforeWrite` / `afterWrite` hooks were removed in v0.2.0 — writes are synchronous, no queue overhead.
+
 ### Events
 
-React to runtime conditions:
+React to transaction/queue events:
 
 ```typescript
 const db = new BunQL("./app.db", {
   retry: { maxRetries: 5, baseDelay: 50 },
   slowQueryThreshold: 100,
   events: {
-    onBusy: (attempt, delayMs) => metrics.increment("db_busy"),
-    onDrain: () => console.log("Write queue empty"),
+    onBusy: (attempt, delayMs) => metrics.increment("db_busy"),   // fires during transactions/queue ops
+    onDrain: () => console.log("Queue empty"),                     // fires after tx/batch complete
+    onError: (err) => sentry.captureException(err),
+    onSlowQuery: (sql, ms) => console.warn(`Slow query (${ms}ms):`, sql),
+  },
+});
     onError: (err) => sentry.captureException(err),
     onSlowQuery: (sql, ms) => console.warn(`Slow query (${ms}ms):`, sql),
   },
@@ -639,12 +643,12 @@ The LRU cache holds up to 100 prepared statements. No config knob — the limit 
 
 ### Synthetic Throughput
 
-| Operation | `bun:sqlite` raw | Manual retry | `better-sqlite3` 12.10 | `sqlite3` 6.0.1 | `node:sqlite` | Deno SQLite | `sql.js` WASM | **BunQL** |
+| Operation | `bun:sqlite` raw | Manual retry | `better-sqlite3` 12 | `sqlite3` 6.0 | `node:sqlite` | Deno SQLite | `sql.js` WASM | **BunQL** |
 |-----------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Point read | 381K | 392K | 294K | 23.9K | 239K | 137K | 36.7K | 291K |
-| Single write | 40.0K | 37.3K | 40.8K | 14.9K | 37.4K | 34.5K | 12.9K | 34.6K |
-| 10 concurrent | 45.1K | 70.8K | 43.1K | — | 32.4K | 65.7K | — | 36.0K |
-| 50 concurrent | 38.7K | 35.9K | 24.4K | — | 25.4K | 31.0K | — | 32.5K |
+| Point read | 367K | 325K | 280K | 21.1K | 214K | 99.5K | 37.5K | 246K |
+| Single write | 38.4K | 36.4K | 39.0K | 13.6K | 16.8K | 25.0K | 13.0K | **38.7K** |
+| 10 concurrent | 43.5K | 68.2K | 33.3K | — | 10.5K | 44.5K | — | **55.7K** |
+| 50 concurrent | 36.7K | 30.1K | 25.5K | — | 14.2K | 23.4K | — | 28.9K |
 
 > `sqlite3@6.0.1` is callback-based — serialized async queue. Read/Write measured via callback completion. `sql.js` is WASM single-threaded. Both excluded from concurrent tests.
 >
