@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added (v0.4.2 — Redis Driver)
+- **Custom Redis driver** — zero npm dependencies, built via `Bun.connect()`:
+  - **RESP encoder/decoder** — Simple String, Error, Integer, Bulk String ($-1 null), Array (batch/nested)
+  - **TCP connection** — `Bun.connect()` with `#tryResolvePending` + orphaned promise rejection guard
+  - **AUTH support** — `redis://:password@host` — authenticates on connect
+  - **SELECT support** — `redis://host/1` — selects database index on connect
+  - **Connection pool** — non-recursive acquire with deadline timeout, stale cleanup
+- **RedisDriver class** — `query(sql)` / `run(sql)` via SQL→AST→Redis pipeline
+- **Pipeline support** — multi-key HGETALL via sequential `#sendCommand`
+- **`@nds-stack/bunql/driver` exports** — `RedisDriver`, `RedisConnectionPool`, `RESPValue`, `encodeCommand`, `decodeSimple`
+- **bunql.ts auto-detect** — `redis://` URLs throw helpful error directing to RedisDriver
+- **Driver tests** — 25 new tests: RESP round-trip, encode/decode, partial reads, URL parsing, connection error
+
 ### Added (v0.4.1 — MongoDB Driver)
 - **Custom MongoDB driver** — zero npm dependencies, built via `Bun.connect()`:
   - **BSON encoder** — JavaScript types → BSON bytes: string, int32, int64, double, boolean, null, document, array, ObjectId (12-byte), Date, Binary, RegExp, Timestamp
@@ -31,13 +44,18 @@
 - **Parser + translator tests** — 44 new tests covering lexer, SQL parsing, MQL parsing, all 3 translators, SQL↔MongoDB round-trip
 
 ### Changed
-- Bundle size: 42.2KB core (+0.5KB for parser/translator), 5.1KB server (unchanged), 45.6KB driver (MongoDB)
-- Tests: 214 (was 138) — 182 existing + 32 new (driver) + includes 44 parser/translator from v0.4.0
-- Files: 10 new driver files + 8 parser/translator files from v0.4.0
-- README now includes MongoDB driver usage via `@nds-stack/bunql/driver` subpath
-- `package.json` exports: added `./driver` subpath
+- Bundle size: 42.2KB core (unchanged), 5.1KB server (unchanged), 63.3KB driver (+17.7KB for Redis)
+- Tests: 239 (was 214) — 25 new Redis driver tests
+- Files: 4 new Redis driver files
+- `@nds-stack/bunql/driver` now exports RedisDriver alongside MongoDriver
+- README: Redis status updated to ✅ Production, Redis Quick Start added
 
-### Fixed
+### Fixed (v0.4.2)
+- **Redis:** `#tryResolvePending` catch block silently swallowed errors — orphaned connection Promise hangs forever. Fixed with proper error rejection + buffer cleanup
+- **Redis:** `resp.ts` bulk-string decoder read offset bug (skipped `+2` for trailing `\r\n`)
+- **Redis:** Redundant `export type { };` removed
+
+### Fixed (v0.4.1)
 - **Critical:** MongoDB TCP buffer corruption — `#onData` resolved with entire buffer instead of exact `n` bytes. Fixed with `#tryResolvePending()` + `#pendingSize` tracker
 - **Critical:** Connection pool `acquire()` recursive — stack overflow under sustained load. Fixed with `while+deadline` loop
 - BSON decoder: `readDocument` endOffset calculation (startOffset ++ totalLength, not this.offset ++ totalLength)

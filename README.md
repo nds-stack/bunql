@@ -6,8 +6,8 @@
 [![Bun](https://img.shields.io/badge/Bun-%3E%3D1.3.0-black?logo=bun)](https://bun.sh)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue?logo=typescript)](https://www.typescriptlang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-214-green)]()
-[![Bundle](https://img.shields.io/badge/bundle-42.2KB%20core%20%2F%2045.6KB%20driver-blue)]()
+[![Tests](https://img.shields.io/badge/tests-239-green)]()
+[![Bundle](https://img.shields.io/badge/bundle-42.2KB%20core%20%2F%2063.3KB%20driver-blue)]()
 
 ---
 
@@ -56,7 +56,7 @@
 |---------|--------|-------------|--------|
 | **SQLite** | ✅ Production (v0.3.0) | `./app.db`, `:memory:` | `bun:sqlite` native |
 | **MongoDB** | ✅ Production (via driver subpath) | `mongodb://localhost:27017/db` | Custom TCP + BSON (zero deps) |
-| **Redis** | 🔜 v0.4.2 | `redis://localhost:6379` | Custom TCP + RESP (zero deps) |
+| **Redis** | ✅ Production (via driver subpath) | `redis://localhost:6379` | Custom TCP + RESP (zero deps) |
 | **PostgreSQL** | 🔜 v0.6.0 | `postgres://localhost:5432/db` | Bun PG client (future API) |
 | **MySQL** | 🔜 v0.7.0 | `mysql://localhost:3306/db` | Bun MySQL client (future API) |
 
@@ -266,6 +266,22 @@ const users = await mongo.query(
 await mongo.run("INSERT INTO users (name, email) VALUES (?, ?)", ["Alice", "a@t.com"]);
 
 await mongo.close();
+```
+
+```typescript
+// Redis — import via driver subpath
+import { RedisDriver } from "@nds-stack/bunql/driver";
+
+const redis = new RedisDriver("redis://:password@localhost:6379/0");
+
+// SQL → AST → Redis
+const user = await redis.query("SELECT * FROM users WHERE id = 1");
+// → HGETALL users:1
+
+await redis.run("INSERT INTO users (id, name, email) VALUES (2, 'Bob', 'b@t.com')");
+// → HSET users:2 name Bob email b@t.com
+
+await redis.close();
 ```
 
 ---
@@ -1225,10 +1241,11 @@ Write operations via the `/run` endpoint are synchronous (direct to `bun:sqlite`
 
 ## Stability
 
-- **v0.4.1-dev (in development)** — MongoDB driver (custom TCP + BSON, SCRAM-SHA-256 auth, connection pool)
+- **v0.4.2-dev (in development)** — Redis driver (custom TCP + RESP, AUTH + SELECT, connection pool)
+- **v0.4.1 (development)** — MongoDB driver (custom TCP + BSON, SCRAM-SHA-256 auth, connection pool)
 - **v0.4.0 (development)** — Universal AST + SQL parser + MQL parser + bidirectional translators
 - **v0.3.0 (stable)** — Statement format control, transaction modes, pragma helper, serialize, verbose mode
-- **214 tests** — unit, integration, concurrency, stress, FTS5, reader pool, statement features, parser, translators, BSON codec, wire protocol
+- **239 tests** — unit, integration, concurrency, stress, FTS5, reader pool, statement features, parser, translators, BSON codec, wire protocol, RESP codec
 - **5000 sequential writes** — verified stable
 - **Graceful shutdown** — drain queue → finalize statements → close DB
 - **Memory safe** — LRU cache eviction, `yocto-queue` linked-list, no unbounded growth
@@ -1237,7 +1254,7 @@ Write operations via the `/run` endpoint are synchronous (direct to `bun:sqlite`
 - **Hand-written parsers** — SQL parser (recursive descent), MQL parser (object traversal), no parser libraries
 - **Observability** — built-in metrics counters, cache stats, WAL monitoring, slow query detection, verbose tracing
 - **Audit score** — 100/100 (zero BLOCKING issues)
-- **Bundle** — 42.2KB core, 5.1KB server, 45.6KB driver (MongoDB)
+- **Bundle** — 42.2KB core, 5.1KB server, 63.3KB driver (MongoDB + Redis)
 
 ---
 
