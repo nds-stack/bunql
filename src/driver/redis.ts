@@ -210,5 +210,3 @@ function arrayToRecord(arr: RESPValue[]): Record<string, unknown> {
   }
   return doc;
 }
-
-export type { };

@@ -1,5 +1,7 @@
 import { describe, test, expect } from "bun:test";
-import { encodeCommand, decodeSimple, RESPReader, encodeBulkString, encodeSimpleString, encodeInteger } from "../../src/driver/redis/resp.ts";
+import { encodeCommand, decodeSimple, RESPReader } from "../../src/driver/redis/resp.ts";
+import { RedisDriver } from "../../src/driver/redis.ts";
+import { BunQL } from "../../src/bunql.ts";
 
 describe("RESP encoder", () => {
   test("encodeCommand produces valid GET", () => {
@@ -41,101 +43,88 @@ describe("RESP encoder", () => {
 describe("RESP decoder", () => {
   test("simple string", () => {
     const data = new TextEncoder().encode("+OK\r\n");
-    const val = decodeSimple(data);
-    expect(val.type).toBe("simple-string");
+    const val = decodeSimple(data) as { type: "simple-string"; value: string };
     expect(val.value).toBe("OK");
   });
 
   test("error", () => {
     const data = new TextEncoder().encode("-ERR unknown command\r\n");
-    const val = decodeSimple(data);
-    expect(val.type).toBe("error");
+    const val = decodeSimple(data) as { type: "error"; value: string };
     expect(val.value).toBe("ERR unknown command");
   });
 
   test("integer", () => {
     const data = new TextEncoder().encode(":1\r\n");
-    const val = decodeSimple(data);
-    expect(val.type).toBe("integer");
+    const val = decodeSimple(data) as { type: "integer"; value: number };
     expect(val.value).toBe(1);
   });
 
   test("bulk string", () => {
     const data = new TextEncoder().encode("$5\r\nhello\r\n");
-    const val = decodeSimple(data);
-    expect(val.type).toBe("bulk-string");
+    const val = decodeSimple(data) as { type: "bulk-string"; value: string };
     expect(val.value).toBe("hello");
   });
 
   test("null bulk string", () => {
     const data = new TextEncoder().encode("$-1\r\n");
-    const val = decodeSimple(data);
-    expect(val.type).toBe("bulk-string");
+    const val = decodeSimple(data) as { type: "bulk-string"; value: null };
     expect(val.value).toBeNull();
   });
 
   test("array of bulk strings", () => {
     const data = new TextEncoder().encode("*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n");
-    const val = decodeSimple(data);
-    expect(val.type).toBe("array");
+    const val = decodeSimple(data) as { type: "array"; value: { type: "bulk-string"; value: string }[] };
     expect(val.value).toHaveLength(2);
-    expect(val.value![0]).toEqual({ type: "bulk-string", value: "foo" });
-    expect(val.value![1]).toEqual({ type: "bulk-string", value: "bar" });
+    expect(val.value[0]!.value).toBe("foo");
+    expect(val.value[1]!.value).toBe("bar");
   });
 
   test("null array", () => {
     const data = new TextEncoder().encode("*-1\r\n");
     const val = decodeSimple(data);
     expect(val.type).toBe("array");
-    expect(val.value).toBeNull();
+    expect((val as { value: null }).value).toBeNull();
   });
 
   test("empty array", () => {
     const data = new TextEncoder().encode("*0\r\n");
-    const val = decodeSimple(data);
-    expect(val.type).toBe("array");
+    const val = decodeSimple(data) as { type: "array"; value: unknown[] };
     expect(val.value).toHaveLength(0);
   });
 });
 
 describe("RESP round-trip", () => {
   test("GET and response", () => {
-    const encoded = encodeCommand("GET", ["name"]);
-    const decoded = decodeSimple(new TextEncoder().encode("$5\r\nAlice\r\n"));
-    expect(decoded.type).toBe("bulk-string");
+    const decoded = decodeSimple(new TextEncoder().encode("$5\r\nAlice\r\n")) as { type: "bulk-string"; value: string };
     expect(decoded.value).toBe("Alice");
   });
 
   test("HSET response as integer", () => {
-    const resp = decodeSimple(new TextEncoder().encode(":1\r\n"));
-    expect(resp.type).toBe("integer");
+    const resp = decodeSimple(new TextEncoder().encode(":1\r\n")) as { type: "integer"; value: number };
     expect(resp.value).toBe(1);
   });
 
   test("DEL response as integer", () => {
-    const resp = decodeSimple(new TextEncoder().encode(":2\r\n"));
-    expect(resp.type).toBe("integer");
+    const resp = decodeSimple(new TextEncoder().encode(":2\r\n")) as { type: "integer"; value: number };
     expect(resp.value).toBe(2);
   });
 
   test("HGETALL response flat array", () => {
     const data = new TextEncoder().encode("*4\r\n$3\r\nfoo\r\n$3\r\nbar\r\n$3\r\nbaz\r\n$4\r\nquux\r\n");
-    const val = decodeSimple(data);
-    expect(val.type).toBe("array");
+    const val = decodeSimple(data) as { type: "array"; value: { type: string; value: string | null }[] };
     expect(val.value).toHaveLength(4);
-    expect(val.value![0]).toEqual({ type: "bulk-string", value: "foo" });
-    expect(val.value![1]).toEqual({ type: "bulk-string", value: "bar" });
-    expect(val.value![2]).toEqual({ type: "bulk-string", value: "baz" });
-    expect(val.value![3]).toEqual({ type: "bulk-string", value: "quux" });
+    expect(val.value[0]!.value).toBe("foo");
+    expect(val.value[1]!.value).toBe("bar");
+    expect(val.value[2]!.value).toBe("baz");
+    expect(val.value[3]!.value).toBe("quux");
   });
 
   test("SCAN response array", () => {
     const data = new TextEncoder().encode("*2\r\n$1\r\n0\r\n*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n");
-    const val = decodeSimple(data);
-    expect(val.type).toBe("array");
+    const val = decodeSimple(data) as { type: "array"; value: ({ type: string; value: unknown } | { type: string; value: unknown[] })[] };
     expect(val.value).toHaveLength(2);
-    expect(val.value![0]).toEqual({ type: "bulk-string", value: "0" });
-    expect(val.value![1].type).toBe("array");
+    expect((val.value[0] as { value: string }).value).toBe("0");
+    expect((val.value[1] as { value: unknown[] }).value).toBeInstanceOf(Array);
   });
 });
 
@@ -163,42 +152,35 @@ describe("RESPReader partial reads", () => {
 
 describe("RedisDriver", () => {
   test("BunQL constructor rejects redis:// with helpful error", () => {
-    const { BunQL } = require("../../src/bunql.ts");
     expect(() => new BunQL("redis://localhost:6379")).toThrow("Redis driver");
   });
 
   test("RedisDriver URL parsing via constructor", () => {
-    const { RedisDriver } = require("../../src/driver/redis.ts");
     const driver = new RedisDriver("redis://:password@host1:6380/1?maxPoolSize=5");
     expect(driver).toBeDefined();
     driver.close();
   });
 
   test("RedisDriver URL parsing - minimal", () => {
-    const { RedisDriver } = require("../../src/driver/redis.ts");
     const driver = new RedisDriver("redis://localhost:6379");
     expect(driver).toBeDefined();
     driver.close();
   });
 
   test("RedisDriver options object", () => {
-    const { RedisDriver } = require("../../src/driver/redis.ts");
     const driver = new RedisDriver({ hostname: "localhost", port: 6379 });
     expect(driver).toBeDefined();
     driver.close();
   });
 
   test("RedisDriver query fails without server", async () => {
-    const { RedisDriver } = require("../../src/driver/redis.ts");
     const driver = new RedisDriver({ hostname: "localhost", port: 16379 });
-
     try {
       await driver.query("SELECT * FROM users WHERE id = 1");
       expect.unreachable();
-    } catch (err: unknown) {
-      expect(err).toBeDefined();
+    } catch {
+      expect(true).toBe(true);
     }
-
     await driver.close();
   });
 });

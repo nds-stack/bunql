@@ -128,8 +128,12 @@ export class RedisConnection {
       const resolve = this.#pendingResolve;
       this.#pendingResolve = null;
       resolve(result);
-    } catch {
-      return;
+    } catch (err) {
+      const reject = this.#pendingReject;
+      this.#pendingResolve = null;
+      this.#pendingReject = null;
+      this.#buffer = new Uint8Array(0);
+      reject?.(err instanceof Error ? err : new Error(String(err)));
     }
   }
 
