@@ -417,7 +417,7 @@ interface RunResult {
 interface Statement<T, P extends unknown[]> {
   all(...params: P): T[];
   get(...params: P): T | undefined;
-  run(...params: P): Promise<RunResult>;
+  run(...params: P): RunResult;
   finalize(): void;
 }
 
