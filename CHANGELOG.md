@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added (v0.7.0 — MySQL Driver)
+- **Custom MySQL wire protocol** — zero npm dependencies, big-endian packet framing:
+  - **Packet format** — 3-byte LE length + 1-byte sequence ID + payload
+  - **Handshake parsing** — server greeting: protocol version, server version, connection ID, auth-plugin-data, capabilities
+  - **mysql_native_password auth** — SHA1-based challenge-response via pure JS SHA1
+  - **COM_QUERY** — send SQL string, receive result set (column definitions + text rows + OK/ERR)
+  - **ResultSet parsing** — length-encoded integers, column definitions, row values, multi-packet assembly
+  - **OK/ERR packet** — affected rows, last insert ID, error code + message + SQL state
+- **TCP connection + pool** — `Bun.connect()` with handshake + auth exchange
+- **MySQLDriver class** — `query(sql)` / `run(sql)` via SQL→MySQL wire protocol
+- **`@nds-stack/bunql/driver` exports** — `MySQLDriver`, `MySQLConnectionPool`, `MySQLError`
+- **bunql.ts auto-detect** — `mysql://` and `mariadb://` URLs throw helpful error
+- **Driver tests** — 12 tests: packet framing, len-encoded int, assemble, handshake parse, URL parsing
+
 ### Added (v0.6.0 — PostgreSQL Driver)
 - **Custom PostgreSQL wire protocol (v3.0)** — zero npm dependencies, big-endian network byte order:
   - **StartupMessage** — protocol version 3.0, user/database params
@@ -58,12 +72,12 @@
 - **Parser + translator tests** — 44 new tests covering lexer, SQL parsing, MQL parsing, all 3 translators, SQL↔MongoDB round-trip
 
 ### Changed
-- Bundle size: 80.6KB core (+38KB for parser + query builder), 5.1KB server, 82.8KB driver (+19KB for PG)
-- Tests: 282 (was 267)
-- Files: 4 new PG driver files (+943 LOC)
-- `@nds-stack/bunql/driver` now exports PGDriver alongside MongoDriver/RedisDriver
-- README: PostgreSQL status updated to ✅ Production, PG Quick Start added
-- TODO.md: Phase 5 milestone added
+- Bundle size: 80.9KB core, 5.1KB server, 101KB driver (+18.5KB for MySQL)
+- Tests: 294 (was 282)
+- Files: 4 new MySQL driver files (+873 LOC)
+- `@nds-stack/bunql/driver` now exports MySQLDriver alongside MongoDriver/RedisDriver/PGDriver
+- README: MySQL status updated to ✅ Production, MySQL Quick Start added
+- TODO.md: Phase 6 milestone added, MySQL driver section
 
 ### Fixed (v0.4.2)
 - **Redis:** `#tryResolvePending` catch block silently swallowed errors — orphaned connection Promise hangs forever. Fixed with proper error rejection + buffer cleanup
