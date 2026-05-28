@@ -1,7 +1,7 @@
 {
   "name": "@nds-stack/bunql",
-  "version": "0.5.0-dev",
-  "description": "Bun Query Language — tulis SQL/MQL, jalan di SQLite, MongoDB, Redis. Zero-dep drivers.",
+  "version": "1.0.0-dev",
+  "description": "Bun Query Language — tulis SQL/MQL, jalan di SQLite, MongoDB, Redis, PostgreSQL, MySQL. Zero-dep drivers via custom wire protocol.",
   "author": "nds-stack <nds.stack@gmail.com>",
   "type": "module",
   "main": "dist/index.js",
@@ -69,14 +69,15 @@
   "keywords": [
     "bun",
     "sqlite",
-    "bun-sqlite",
+    "mongodb",
+    "redis",
+    "postgresql",
+    "mysql",
+    "query",
     "database",
     "wrapper",
-    "concurrency",
-    "queue",
-    "transaction",
-    "sqlite-busy",
-    "wal",
+    "wire-protocol",
+    "zero-dependency",
     "typescript"
   ],
   "license": "MIT"
