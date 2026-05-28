@@ -613,24 +613,26 @@ The LRU cache holds up to 100 prepared statements. No config knob — the limit 
 
 ## Benchmarks
 
-Environment: Bun v1.3.14, Node.js v22.12.0, Deno 2.7.14 — Windows x64, 500 iterations per test.
-All targets use identical PRAGMA: `WAL`, `synchronous=NORMAL`, `cache_size=-2000`, `foreign_keys=ON`.
-Results may vary ±30% between runs due to system load and disk caching.
+**Test machine:** Intel i7-7500U @ 2.90GHz, 8GB RAM, Samsung NVMe SSD 238GB, Windows 10 x64<br>
+**Methodology:** 5000 iterations, 1000 warmup (discarded), 5 runs, reporting median (min–max).<br>
+**Settings:** All targets use identical PRAGMA — `WAL`, `synchronous=NORMAL`, `cache_size=-2000`, `foreign_keys=ON`.
 
-**7 competitors across 3 runtimes:** Bun (native), Node.js (CJS), Deno (FFI).
+**7 competitors across 3 runtimes:** Bun 1.3.14 (native), Node.js 22.12.0 (CJS), Deno 2.7.14 (FFI).
 
 ### Synthetic Throughput
 
 | Operation | `bun:sqlite` raw | Manual retry | `better-sqlite3` 12.10 | `sqlite3` 6.0.1 | `node:sqlite` | Deno SQLite | `sql.js` WASM | **BunQL** |
 |-----------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Point read | 284K | 285K | 175K | 111K | 209K | 64.5K | 34.7K | 222K |
-| Single write | 32.1K | 28.0K | 18.7K | 131K* | 22.7K | 22.7K | 10.6K | 23.7K |
-| 10 concurrent | 65.5K | 73.8K | 32.1K | — | 24.4K | 37.2K | — | 52.4K |
-| 50 concurrent | 26.0K | 27.8K | 24.7K | — | 21.1K | 21.5K | — | 28.9K |
+| Point read | 381K | 392K | 294K | 23.9K | 239K | 137K | 36.7K | 291K |
+| Single write | 40.0K | 37.3K | 40.8K | 14.9K | 37.4K | 34.5K | 12.9K | 34.6K |
+| 10 concurrent | 45.1K | 70.8K | 43.1K | — | 32.4K | 65.7K | — | 36.0K |
+| 50 concurrent | 38.7K | 35.9K | 24.4K | — | 25.4K | 31.0K | — | 32.5K |
 
-> \* `sqlite3@6.0.1` write numbers reflect async callback enqueue speed, not commit speed. The library uses an internal serialized queue — `db.close()` may not flush all pending operations. Reads and concurrent are unaffected.
+> `sqlite3@6.0.1` is callback-based — serialized async queue. Read/Write measured via callback completion. `sql.js` is WASM single-threaded. Both excluded from concurrent tests.
 >
-> Concurrent writes tested via manual retry loop (max 5 attempts, exponential backoff). `sql.js` and `sqlite3@6.0.1` excluded: WASM single-threaded, callback queue incompatible. BunQL eliminates the need for manual retry — writes are serialized, reads are parallel.
+> Concurrent writes use manual retry loop (max 5 attempts, exponential backoff). BunQL eliminates manual retry — writes are serialized, reads are parallel.
+>
+> **Hardware matters.** Official better-sqlite3 benchmark reports 314K read / 62.6K write on macOS (SSD). Our 294K / 40.8K on Windows NVMe is consistent — macOS I/O stack has lower `fsync` latency for SQLite commits.
 
 ### Realistic Workloads
 

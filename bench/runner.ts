@@ -5,8 +5,11 @@ import initSqlJs from "sql.js";
 import { unlinkSync, mkdirSync, existsSync } from "fs";
 
 const BENCH_DIR = "bench/tmp";
-const BENCH_ITERATIONS = 500;
+const ITERATIONS = 5000;
+const WARMUP = 1000;
+const RUNS = 5;
 const CONCURRENCY_LEVELS = [10, 50];
+const CONC_ITERATIONS = 500;
 
 function setupBenchDir(): void {
   try { mkdirSync(BENCH_DIR, { recursive: true }); } catch { /* exists */ }
@@ -21,19 +24,59 @@ function cleanupBenchDB(path: string): void {
   try { unlinkSync(path); } catch { /* ignore */ }
 }
 
+function median(arr: number[]): number {
+  const sorted = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+}
+
 function formatOps(ops: number): string {
   if (ops > 1_000_000) return `${(ops / 1_000_000).toFixed(2)}M ops/s`;
   if (ops > 1000) return `${(ops / 1000).toFixed(2)}K ops/s`;
   return `${ops.toFixed(0)} ops/s`;
 }
 
+function statsStr(s: { median: number; min: number; max: number }): string {
+  return `${formatOps(s.median)} (min ${formatOps(s.min)}, max ${formatOps(s.max)})`;
+}
+
+interface Stats { median: number; min: number; max: number; }
 interface BenchResult {
-  read: number;
-  write: number;
-  concurrentWrite: Record<number, number>;
+  read: Stats;
+  write: Stats;
+  concurrentWrite: Record<number, Stats>;
 }
 
 // --- Bun Benchmarks ---
+
+function runMulti<T>(fn: () => T): { result: T; timings: number[] } {
+  const timings: number[] = [];
+  let result!: T;
+  for (let r = 0; r < RUNS; r++) {
+    const start = performance.now();
+    result = fn();
+    timings.push(performance.now() - start);
+  }
+  return { result, timings };
+}
+
+function syncOps(timings: number[]): number {
+  return (ITERATIONS / median(timings)) * 1000;
+}
+
+async function asyncOps(fn: () => Promise<void>): Promise<Stats> {
+  const timings: number[] = [];
+  for (let r = 0; r < RUNS; r++) {
+    const start = performance.now();
+    await fn();
+    timings.push(performance.now() - start);
+  }
+  return {
+    median: (ITERATIONS / median(timings)) * 1000,
+    min: (ITERATIONS / Math.max(...timings)) * 1000,
+    max: (ITERATIONS / Math.min(...timings)) * 1000,
+  };
+}
 
 async function benchRawSQLite(path: string): Promise<BenchResult> {
   const db = new Database(path);
@@ -44,32 +87,50 @@ async function benchRawSQLite(path: string): Promise<BenchResult> {
   db.run("CREATE TABLE bench (id INTEGER PRIMARY KEY, val TEXT)");
 
   const insert = db.prepare("INSERT INTO bench (val) VALUES (?)");
-  for (let i = 0; i < BENCH_ITERATIONS; i++) insert.run(`value-${i}`);
+  for (let i = 0; i < WARMUP; i++) insert.run(`seed-${i}`);
 
   const read = db.prepare("SELECT * FROM bench WHERE id = ?");
-  read.get(1);
+  for (let i = 0; i < WARMUP; i++) read.get((i % WARMUP) + 1);
 
-  const readStart = performance.now();
-  for (let i = 0; i < BENCH_ITERATIONS; i++) read.get((i % BENCH_ITERATIONS) + 1);
-  const readOps = (BENCH_ITERATIONS / (performance.now() - readStart)) * 1000;
+  const { timings: rTimings } = runMulti(() => {
+    for (let i = 0; i < ITERATIONS; i++) read.get((i % WARMUP) + 1);
+  });
+  const readOps: Stats = {
+    median: (ITERATIONS / median(rTimings)) * 1000,
+    min: (ITERATIONS / Math.max(...rTimings)) * 1000,
+    max: (ITERATIONS / Math.min(...rTimings)) * 1000,
+  };
 
-  const writeStart = performance.now();
-  for (let i = 0; i < BENCH_ITERATIONS; i++) insert.run(`write-${i}`);
-  const writeOps = (BENCH_ITERATIONS / (performance.now() - writeStart)) * 1000;
+  const { timings: wTimings } = runMulti(() => {
+    for (let i = 0; i < ITERATIONS; i++) insert.run(`write-${i}`);
+  });
+  const writeOps: Stats = {
+    median: (ITERATIONS / median(wTimings)) * 1000,
+    min: (ITERATIONS / Math.max(...wTimings)) * 1000,
+    max: (ITERATIONS / Math.min(...wTimings)) * 1000,
+  };
 
-  const concurrentWrite: Record<number, number> = {};
+  const concurrentWrite: Record<number, Stats> = {};
   for (const level of CONCURRENCY_LEVELS) {
-    const start = performance.now();
-    await Promise.all(Array.from({ length: BENCH_ITERATIONS }, (_, i) =>
-      (async () => {
-        for (let attempt = 0; attempt < 5; attempt++) {
-          try { insert.run(`raw-${level}-${i}`); return; } catch {
-            await Bun.sleep(10 * Math.pow(2, attempt));
+    const cTimings: number[] = [];
+    for (let r = 0; r < RUNS; r++) {
+      const start = performance.now();
+      await Promise.all(Array.from({ length: CONC_ITERATIONS }, (_, i) =>
+        (async () => {
+          for (let attempt = 0; attempt < 5; attempt++) {
+            try { insert.run(`raw-c-${level}-${r}-${i}`); return; } catch {
+              await Bun.sleep(10 * Math.pow(2, attempt));
+            }
           }
-        }
-      })(),
-    ));
-    concurrentWrite[level] = (BENCH_ITERATIONS / (performance.now() - start)) * 1000;
+        })(),
+      ));
+      cTimings.push(performance.now() - start);
+    }
+    concurrentWrite[level] = {
+      median: (CONC_ITERATIONS / median(cTimings)) * 1000,
+      min: (CONC_ITERATIONS / Math.max(...cTimings)) * 1000,
+      max: (CONC_ITERATIONS / Math.min(...cTimings)) * 1000,
+    };
   }
 
   db.close();
@@ -79,28 +140,37 @@ async function benchRawSQLite(path: string): Promise<BenchResult> {
 async function benchBunQL(path: string): Promise<BenchResult> {
   const db = new BunQL(path);
   await db.run("CREATE TABLE bench (id INTEGER PRIMARY KEY, val TEXT)");
-  for (let i = 0; i < BENCH_ITERATIONS; i++) await db.run("INSERT INTO bench (val) VALUES (?)", [`value-${i}`]);
-  db.query("SELECT * FROM bench WHERE id = ?", [1]);
 
-  const readStart = performance.now();
-  for (let i = 0; i < BENCH_ITERATIONS; i++) db.query("SELECT * FROM bench WHERE id = ?", [(i % BENCH_ITERATIONS) + 1]);
-  const readOps = (BENCH_ITERATIONS / (performance.now() - readStart)) * 1000;
+  for (let i = 0; i < WARMUP; i++) await db.run("INSERT INTO bench (val) VALUES (?)", [`seed-${i}`]);
+  for (let i = 0; i < WARMUP; i++) db.query("SELECT * FROM bench WHERE id = ?", [(i % WARMUP) + 1]);
 
-  const writeStart = performance.now();
-  for (let i = 0; i < BENCH_ITERATIONS; i++) await db.run("INSERT INTO bench (val) VALUES (?)", [`write-${i}`]);
-  const writeOps = (BENCH_ITERATIONS / (performance.now() - writeStart)) * 1000;
+  const read = await asyncOps(async () => {
+    for (let i = 0; i < ITERATIONS; i++) db.query("SELECT * FROM bench WHERE id = ?", [(i % WARMUP) + 1]);
+  });
 
-  const concurrentWrite: Record<number, number> = {};
+  const write = await asyncOps(async () => {
+    for (let i = 0; i < ITERATIONS; i++) await db.run("INSERT INTO bench (val) VALUES (?)", [`write-${i}`]);
+  });
+
+  const concurrentWrite: Record<number, Stats> = {};
   for (const level of CONCURRENCY_LEVELS) {
-    const start = performance.now();
-    await Promise.all(Array.from({ length: BENCH_ITERATIONS }, (_, i) =>
-      db.run("INSERT INTO bench (val) VALUES (?)", [`bql-${level}-${i}`]),
-    ));
-    concurrentWrite[level] = (BENCH_ITERATIONS / (performance.now() - start)) * 1000;
+    const cTimings: number[] = [];
+    for (let r = 0; r < RUNS; r++) {
+      const start = performance.now();
+      await Promise.all(Array.from({ length: CONC_ITERATIONS }, (_, i) =>
+        db.run("INSERT INTO bench (val) VALUES (?)", [`bql-c-${level}-${r}-${i}`]),
+      ));
+      cTimings.push(performance.now() - start);
+    }
+    concurrentWrite[level] = {
+      median: (CONC_ITERATIONS / median(cTimings)) * 1000,
+      min: (CONC_ITERATIONS / Math.max(...cTimings)) * 1000,
+      max: (CONC_ITERATIONS / Math.min(...cTimings)) * 1000,
+    };
   }
 
   await db.close();
-  return { read: readOps, write: writeOps, concurrentWrite };
+  return { read, write, concurrentWrite };
 }
 
 async function benchManualRetry(path: string): Promise<BenchResult> {
@@ -112,41 +182,54 @@ async function benchManualRetry(path: string): Promise<BenchResult> {
   db.run("CREATE TABLE bench (id INTEGER PRIMARY KEY, val TEXT)");
 
   const insert = db.prepare("INSERT INTO bench (val) VALUES (?)");
-  for (let i = 0; i < BENCH_ITERATIONS; i++) insert.run(`value-${i}`);
+  for (let i = 0; i < WARMUP; i++) insert.run(`seed-${i}`);
   const read = db.prepare("SELECT * FROM bench WHERE id = ?");
-  read.get(1);
+  for (let i = 0; i < WARMUP; i++) read.get((i % WARMUP) + 1);
 
-  const readStart = performance.now();
-  for (let i = 0; i < BENCH_ITERATIONS; i++) read.get((i % BENCH_ITERATIONS) + 1);
-  const readOps = (BENCH_ITERATIONS / (performance.now() - readStart)) * 1000;
+  const { timings: rTimings } = runMulti(() => {
+    for (let i = 0; i < ITERATIONS; i++) read.get((i % WARMUP) + 1);
+  });
+  const readOps: Stats = {
+    median: (ITERATIONS / median(rTimings)) * 1000,
+    min: (ITERATIONS / Math.max(...rTimings)) * 1000,
+    max: (ITERATIONS / Math.min(...rTimings)) * 1000,
+  };
 
-  const writeStart = performance.now();
-  for (let i = 0; i < BENCH_ITERATIONS; i++) {
-    for (let attempt = 0; attempt < 5; attempt++) {
-      try { insert.run(`write-${i}`); break; } catch {
-        await Bun.sleep(50 * Math.pow(2, attempt));
+  const write = await asyncOps(async () => {
+    for (let i = 0; i < ITERATIONS; i++) {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try { insert.run(`write-${i}`); break; } catch {
+          await Bun.sleep(50 * Math.pow(2, attempt));
+        }
       }
     }
-  }
-  const writeOps = (BENCH_ITERATIONS / (performance.now() - writeStart)) * 1000;
+  });
 
-  const concurrentWrite: Record<number, number> = {};
+  const concurrentWrite: Record<number, Stats> = {};
   for (const level of CONCURRENCY_LEVELS) {
-    const start = performance.now();
-    await Promise.all(Array.from({ length: BENCH_ITERATIONS }, (_, i) =>
-      (async () => {
-        for (let attempt = 0; attempt < 5; attempt++) {
-          try { insert.run(`manual-${level}-${i}`); return; } catch {
-            await Bun.sleep(50 * Math.pow(2, attempt));
+    const cTimings: number[] = [];
+    for (let r = 0; r < RUNS; r++) {
+      const start = performance.now();
+      await Promise.all(Array.from({ length: CONC_ITERATIONS }, (_, i) =>
+        (async () => {
+          for (let attempt = 0; attempt < 5; attempt++) {
+            try { insert.run(`man-c-${level}-${r}-${i}`); return; } catch {
+              await Bun.sleep(50 * Math.pow(2, attempt));
+            }
           }
-        }
-      })(),
-    ));
-    concurrentWrite[level] = (BENCH_ITERATIONS / (performance.now() - start)) * 1000;
+        })(),
+      ));
+      cTimings.push(performance.now() - start);
+    }
+    concurrentWrite[level] = {
+      median: (CONC_ITERATIONS / median(cTimings)) * 1000,
+      min: (CONC_ITERATIONS / Math.max(...cTimings)) * 1000,
+      max: (CONC_ITERATIONS / Math.min(...cTimings)) * 1000,
+    };
   }
 
   db.close();
-  return { read: readOps, write: writeOps, concurrentWrite };
+  return { read: readOps, write, concurrentWrite };
 }
 
 async function benchSqlJS(): Promise<BenchResult> {
@@ -154,32 +237,35 @@ async function benchSqlJS(): Promise<BenchResult> {
   const db = new SQL.Database();
   db.run("CREATE TABLE bench (id INTEGER PRIMARY KEY, val TEXT)");
 
-  const insertStmt = db.prepare("INSERT INTO bench (val) VALUES (?)");
-  for (let i = 0; i < BENCH_ITERATIONS; i++) insertStmt.run([`value-${i}`]);
-  insertStmt.free();
+  const ins = db.prepare("INSERT INTO bench (val) VALUES (?)");
+  for (let i = 0; i < WARMUP; i++) ins.run([`seed-${i}`]);
+  ins.free();
 
-  const readStmt = db.prepare("SELECT * FROM bench WHERE id = ?");
-  readStmt.get([1]);
+  const rd = db.prepare("SELECT * FROM bench WHERE id = ?");
+  for (let i = 0; i < WARMUP; i++) rd.get([(i % WARMUP) + 1]);
 
-  const readStart = performance.now();
-  for (let i = 0; i < BENCH_ITERATIONS; i++) readStmt.get([(i % BENCH_ITERATIONS) + 1]);
-  const readOps = (BENCH_ITERATIONS / (performance.now() - readStart)) * 1000;
-  readStmt.free();
+  const { timings: rTimings } = runMulti(() => {
+    for (let i = 0; i < ITERATIONS; i++) rd.get([(i % WARMUP) + 1]);
+  });
+  rd.free();
+  const readOps: Stats = {
+    median: (ITERATIONS / median(rTimings)) * 1000,
+    min: (ITERATIONS / Math.max(...rTimings)) * 1000,
+    max: (ITERATIONS / Math.min(...rTimings)) * 1000,
+  };
 
-  const writeStart = performance.now();
-  const writeStmt = db.prepare("INSERT INTO bench (val) VALUES (?)");
-  for (let i = 0; i < BENCH_ITERATIONS; i++) writeStmt.run([`write-${i}`]);
-  const writeOps = (BENCH_ITERATIONS / (performance.now() - writeStart)) * 1000;
-  writeStmt.free();
+  const { timings: wTimings } = runMulti(() => {
+    const ws = db.prepare("INSERT INTO bench (val) VALUES (?)");
+    for (let i = 0; i < ITERATIONS; i++) ws.run([`write-${i}`]);
+    ws.free();
+  });
+  const writeOps: Stats = {
+    median: (ITERATIONS / median(wTimings)) * 1000,
+    min: (ITERATIONS / Math.max(...wTimings)) * 1000,
+    max: (ITERATIONS / Math.min(...wTimings)) * 1000,
+  };
 
-  const concurrentWrite: Record<number, number> = {};
-  for (const level of CONCURRENCY_LEVELS) {
-    const start = performance.now();
-    const stmt = db.prepare("INSERT INTO bench (val) VALUES (?)");
-    for (let i = 0; i < BENCH_ITERATIONS; i++) stmt.run([`sqljs-${level}-${i}`]);
-    concurrentWrite[level] = (BENCH_ITERATIONS / (performance.now() - start)) * 1000;
-    stmt.free();
-  }
+  const concurrentWrite: Record<number, Stats> = {};
 
   db.close();
   return { read: readOps, write: writeOps, concurrentWrite };
@@ -200,8 +286,13 @@ function spawnBench(cmd: string, args: string[], envExtra?: Record<string, strin
   try {
     return JSON.parse(output) as BenchResult;
   } catch {
-    return { read: 0, write: 0, concurrentWrite: {} };
+    return defaultResult();
   }
+}
+
+function defaultResult(): BenchResult {
+  const s: Stats = { median: 0, min: 0, max: 0 };
+  return { read: s, write: s, concurrentWrite: {} };
 }
 
 function spawnNode(script: string, extraArgs: string[] = []): BenchResult {
@@ -219,7 +310,7 @@ async function benchMixedWorkload(path: string) {
   await db.run("CREATE TABLE bench (id INTEGER PRIMARY KEY, val TEXT)");
   const start = performance.now();
   let reads = 0, writes = 0, txs = 0;
-  for (let i = 0; i < BENCH_ITERATIONS; i++) {
+  for (let i = 0; i < 500; i++) {
     if (i % 3 === 0) { await db.run("INSERT INTO bench (val) VALUES (?)", [`write-${i}`]); writes++; }
     else if (i % 3 === 1) { db.query("SELECT COUNT(*) as cnt FROM bench"); reads++; }
     else { await db.transaction(async (tx) => { await tx.run("INSERT INTO bench (val) VALUES (?)", [`tx-${i}`]); }); txs++; }
@@ -233,7 +324,7 @@ async function benchBatchWorkload(path: string) {
   const db = new BunQL(path);
   await db.run("CREATE TABLE bench (id INTEGER PRIMARY KEY, val TEXT)");
   const batchSize = 25;
-  const batches = Math.floor(BENCH_ITERATIONS / batchSize);
+  const batches = Math.floor(500 / batchSize);
   const start = performance.now();
   for (let b = 0; b < batches; b++) {
     await db.batch(Array.from({ length: batchSize }, (_, i) => ({
@@ -248,9 +339,9 @@ async function benchBatchWorkload(path: string) {
 async function benchCachePressure(path: string) {
   const db = new BunQL(path);
   await db.run("CREATE TABLE bench (id INTEGER PRIMARY KEY, val TEXT)");
-  for (let i = 0; i < BENCH_ITERATIONS; i++) await db.run("INSERT INTO bench (val) VALUES (?)", [`val-${i}`]);
+  for (let i = 0; i < 500; i++) await db.run("INSERT INTO bench (val) VALUES (?)", [`val-${i}`]);
   const start = performance.now();
-  for (let i = 0; i < 200; i++) db.query("SELECT * FROM bench WHERE val = ?", [`val-${i % BENCH_ITERATIONS}`]);
+  for (let i = 0; i < 200; i++) db.query("SELECT * FROM bench WHERE val = ?", [`val-${i % 500}`]);
   const duration = performance.now() - start;
   await db.close();
   return { cachePressure: (200 / duration) * 1000, durationMs: duration.toFixed(1) };
@@ -262,7 +353,7 @@ async function main(): Promise<void> {
   setupBenchDir();
 
   console.log("\n=== BunQL Benchmarks ===\n");
-  console.log(`Iterations per test: ${BENCH_ITERATIONS}\n`);
+  console.log(`Iterations: ${ITERATIONS} (warmup: ${WARMUP}), ${RUNS} runs, reporting median (min–max)\n`);
 
   // --- BUN Runtime ---
   console.log("--- Bun Runtime ---");
@@ -280,39 +371,38 @@ async function main(): Promise<void> {
 
   const sqljs = await benchSqlJS();
 
-  console.log(`  bun:sqlite (raw)    | Read: ${formatOps(raw.read)} | Write: ${formatOps(raw.write)}`);
-  console.log(`  BunQL               | Read: ${formatOps(bql.read)} | Write: ${formatOps(bql.write)}`);
-  console.log(`  Manual retry        | Read: ${formatOps(manual.read)} | Write: ${formatOps(manual.write)}`);
-  console.log(`  sql.js (WASM)       | Read: ${formatOps(sqljs.read)} | Write: ${formatOps(sqljs.write)}`);
+  console.log(`  bun:sqlite (raw)      | Read:  ${statsStr(raw.read)} | Write: ${statsStr(raw.write)}`);
+  console.log(`  BunQL                 | Read:  ${statsStr(bql.read)} | Write: ${statsStr(bql.write)}`);
+  console.log(`  Manual retry          | Read:  ${statsStr(manual.read)} | Write: ${statsStr(manual.write)}`);
+  console.log(`  sql.js (WASM)         | Read:  ${statsStr(sqljs.read)} | Write: ${statsStr(sqljs.write)}`);
 
   // --- Node.js Runtime ---
   console.log("\n--- Node.js Runtime ---");
   const bs3 = spawnNode("bench/node-better-sqlite3.cjs");
-  console.log(`  better-sqlite3 12.10 | Read: ${formatOps(bs3.read)} | Write: ${formatOps(bs3.write)}`);
+  console.log(`  better-sqlite3 12.10  | Read:  ${statsStr(bs3.read)} | Write: ${statsStr(bs3.write)}`);
 
   const sql3 = spawnNode("bench/node-sqlite3.cjs");
-  console.log(`  sqlite3 6.0.1        | Read: ${formatOps(sql3.read)} | Write: ${formatOps(sql3.write)}`);
+  console.log(`  sqlite3 6.0.1          | Read:  ${statsStr(sql3.read)} | Write: ${statsStr(sql3.write)}`);
 
   const nsql = spawnNode("bench/node-builtin-sqlite.cjs", ["--experimental-sqlite"]);
-  console.log(`  node:sqlite (builtin)| Read: ${formatOps(nsql.read)} | Write: ${formatOps(nsql.write)}`);
+  console.log(`  node:sqlite (builtin)  | Read:  ${statsStr(nsql.read)} | Write: ${statsStr(nsql.write)}`);
 
   // --- Deno Runtime ---
   console.log("\n--- Deno Runtime ---");
   const deno = spawnDeno("bench/deno-sqlite.ts");
-  console.log(`  Deno SQLite (FFI)   | Read: ${formatOps(deno.read)} | Write: ${formatOps(deno.write)}`);
+  console.log(`  Deno SQLite (FFI)     | Read:  ${statsStr(deno.read)} | Write: ${statsStr(deno.write)}`);
 
   // --- Concurrent Writes ---
-  console.log("\n--- Concurrent Writes ---");
+  console.log("\n--- Concurrent Writes (500 iter, 5 runs) ---");
   for (const level of CONCURRENCY_LEVELS) {
     const parts: string[] = [
-      `bun:sqlite: ${formatOps(raw.concurrentWrite?.[level] ?? 0)}`,
-      `Manual: ${formatOps(manual.concurrentWrite?.[level] ?? 0)}`,
-      `BunQL: ${formatOps(bql.concurrentWrite?.[level] ?? 0)}`,
+      `bun:sqlite: ${formatOps(raw.concurrentWrite?.[level]?.median ?? 0)}`,
+      `Manual: ${formatOps(manual.concurrentWrite?.[level]?.median ?? 0)}`,
+      `BunQL: ${formatOps(bql.concurrentWrite?.[level]?.median ?? 0)}`,
     ];
-    if (bs3.concurrentWrite?.[level]) parts.push(`better-sql3: ${formatOps(bs3.concurrentWrite[level])}`);
-    if (sql3.concurrentWrite?.[level]) parts.push(`sqlite3: ${formatOps(sql3.concurrentWrite[level])}`);
-    if (nsql.concurrentWrite?.[level]) parts.push(`node:sqlite: ${formatOps(nsql.concurrentWrite[level])}`);
-    if (deno.concurrentWrite?.[level]) parts.push(`Deno: ${formatOps(deno.concurrentWrite[level])}`);
+    if (bs3.concurrentWrite?.[level]?.median) parts.push(`better-sql3: ${formatOps(bs3.concurrentWrite[level]!.median)}`);
+    if (nsql.concurrentWrite?.[level]?.median) parts.push(`node:sqlite: ${formatOps(nsql.concurrentWrite[level]!.median)}`);
+    if (deno.concurrentWrite?.[level]?.median) parts.push(`Deno: ${formatOps(deno.concurrentWrite[level]!.median)}`);
     console.log(`  ${level} concurrent | ${parts.join(" | ")}`);
   }
 
