@@ -1,6 +1,7 @@
 /* eslint-disable no-console */
 import { Database } from "bun:sqlite";
 import { BunQL } from "../src/bunql.ts";
+import initSqlJs from "sql.js";
 import { unlinkSync, mkdirSync } from "fs";
 
 const BENCH_DIR = "bench/tmp";
@@ -102,6 +103,99 @@ async function benchBunQL(path: string) {
   return { read: readOps, write: writeOps, concurrentWrite };
 }
 
+async function benchSqlJS(path: string) {
+  const SQL = await initSqlJs();
+  const db = new SQL.Database();
+  db.run("CREATE TABLE bench (id INTEGER PRIMARY KEY, val TEXT)");
+
+  // sql.js is in-memory (WASM), no WAL needed
+  const insertStmt = db.prepare("INSERT INTO bench (val) VALUES (?)");
+  for (let i = 0; i < BENCH_ITERATIONS; i++) {
+    insertStmt.run([`value-${i}`]);
+  }
+  insertStmt.free();
+
+  const readStmt = db.prepare("SELECT * FROM bench WHERE id = ?");
+  readStmt.get([1]); // warmup
+
+  const readStart = performance.now();
+  for (let i = 0; i < BENCH_ITERATIONS; i++) readStmt.get([(i % BENCH_ITERATIONS) + 1]);
+  const readOps = (BENCH_ITERATIONS / (performance.now() - readStart)) * 1000;
+  readStmt.free();
+
+  const writeStart = performance.now();
+  const writeStmt = db.prepare("INSERT INTO bench (val) VALUES (?)");
+  for (let i = 0; i < BENCH_ITERATIONS; i++) writeStmt.run([`write-${i}`]);
+  const writeOps = (BENCH_ITERATIONS / (performance.now() - writeStart)) * 1000;
+  writeStmt.free();
+
+  // sql.js is sync, no concurrency for writes (single-threaded WASM)
+  const concurrentWrite: Record<number, number> = {};
+  for (const level of CONCURRENCY_LEVELS) {
+    const start = performance.now();
+    const stmt = db.prepare("INSERT INTO bench (val) VALUES (?)");
+    for (let i = 0; i < BENCH_ITERATIONS; i++) stmt.run([`sqljs-concurrent-${level}-${i}`]);
+    concurrentWrite[level] = (BENCH_ITERATIONS / (performance.now() - start)) * 1000;
+    stmt.free();
+  }
+
+  db.close();
+  return { read: readOps, write: writeOps, concurrentWrite };
+}
+
+async function benchManualRetry(path: string) {
+  const db = new Database(path);
+  db.run("PRAGMA journal_mode=WAL");
+  db.run("PRAGMA synchronous=NORMAL");
+  db.run("PRAGMA cache_size=-2000");
+  db.run("PRAGMA foreign_keys=ON");
+  db.run("CREATE TABLE bench (id INTEGER PRIMARY KEY, val TEXT)");
+
+  const insert = db.prepare("INSERT INTO bench (val) VALUES (?)");
+  for (let i = 0; i < BENCH_ITERATIONS; i++) insert.run(`value-${i}`);
+
+  const read = db.prepare("SELECT * FROM bench WHERE id = ?");
+  read.get(1); // warmup
+
+  const readStart = performance.now();
+  for (let i = 0; i < BENCH_ITERATIONS; i++) read.get((i % BENCH_ITERATIONS) + 1);
+  const readOps = (BENCH_ITERATIONS / (performance.now() - readStart)) * 1000;
+
+  const writeStart = performance.now();
+  for (let i = 0; i < BENCH_ITERATIONS; i++) {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        insert.run(`write-${i}`);
+        break;
+      } catch {
+        await Bun.sleep(50 * Math.pow(2, attempt));
+      }
+    }
+  }
+  const writeOps = (BENCH_ITERATIONS / (performance.now() - writeStart)) * 1000;
+
+  const concurrentWrite: Record<number, number> = {};
+  for (const level of CONCURRENCY_LEVELS) {
+    const start = performance.now();
+    await Promise.all(Array.from({ length: BENCH_ITERATIONS }, (_, i) =>
+      (async () => {
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            insert.run(`manual-concurrent-${level}-${i}`);
+            return;
+          } catch {
+            await Bun.sleep(50 * Math.pow(2, attempt));
+          }
+        }
+      })(),
+    ));
+    concurrentWrite[level] = (BENCH_ITERATIONS / (performance.now() - start)) * 1000;
+  }
+
+  db.close();
+  return { read: readOps, write: writeOps, concurrentWrite };
+}
+
 // --- Realistic workload benchmarks ---
 
 async function benchMixedWorkload(path: string) {
@@ -160,7 +254,6 @@ async function benchCachePressure(path: string) {
   for (let i = 0; i < BENCH_ITERATIONS; i++)
     await db.run("INSERT INTO bench (val) VALUES (?)", [`val-${i}`]);
 
-  // 200 unique SQL patterns to stress cache (maxSize=100, triggers evictions)
   const start = performance.now();
   for (let i = 0; i < 200; i++) {
     db.query("SELECT * FROM bench WHERE val = ?", [`val-${i % BENCH_ITERATIONS}`]);
@@ -184,18 +277,26 @@ async function main(): Promise<void> {
   const bql = await benchBunQL(bqlPath);
   cleanupBenchDB(bqlPath);
 
-  console.log(`  Raw bun:sqlite  | Read: ${formatOps(raw.read)} | Write: ${formatOps(raw.write)}`);
-  console.log(`  BunQL           | Read: ${formatOps(bql.read)} | Write: ${formatOps(bql.write)}`);
+  const manualPath = setupBenchDB();
+  const manual = await benchManualRetry(manualPath);
+  cleanupBenchDB(manualPath);
+
+  let sqljsPath = setupBenchDB();
+  const sqljs = await benchSqlJS(sqljsPath);
+  cleanupBenchDB(sqljsPath);
+
+  console.log(`  bun:sqlite (raw)  | Read: ${formatOps(raw.read)} | Write: ${formatOps(raw.write)}`);
+  console.log(`  BunQL             | Read: ${formatOps(bql.read)} | Write: ${formatOps(bql.write)}`);
+  console.log(`  Manual retry      | Read: ${formatOps(manual.read)} | Write: ${formatOps(manual.write)}`);
+  console.log(`  sql.js (WASM)     | Read: ${formatOps(sqljs.read)} | Write: ${formatOps(sqljs.write)}`);
 
   console.log("\n  Overhead vs raw bun:sqlite:");
-  console.log(`  Read overhead:  ${(((bql.read - raw.read) / raw.read) * 100).toFixed(1)}%`);
-  console.log(`  Write overhead: ${(((bql.write - raw.write) / raw.write) * 100).toFixed(1)}%`);
+  console.log(`  BunQL    | Read: ${(((bql.read - raw.read) / raw.read) * 100).toFixed(1)}% | Write: ${(((bql.write - raw.write) / raw.write) * 100).toFixed(1)}%`);
+  console.log(`  Manual   | Read: ${(((manual.read - raw.read) / raw.read) * 100).toFixed(1)}% | Write: ${(((manual.write - raw.write) / raw.write) * 100).toFixed(1)}%`);
 
   console.log("\n--- Synthetic: Concurrent Writes ---");
   for (const level of CONCURRENCY_LEVELS) {
-    const rawOps = raw.concurrentWrite?.[level] ?? 0;
-    const bqlOps = bql.concurrentWrite?.[level] ?? 0;
-    console.log(`  ${level} concurrent | Raw: ${formatOps(rawOps)} | BunQL: ${formatOps(bqlOps)}`);
+    console.log(`  ${level} concurrent | bun:sqlite: ${formatOps(raw.concurrentWrite?.[level] ?? 0)} | BunQL: ${formatOps(bql.concurrentWrite?.[level] ?? 0)}`);
   }
 
   // --- Realistic workloads ---

@@ -113,6 +113,7 @@ export class TransactionManager {
         this.#hooks?.afterTransaction?.(duration, false);
         this.#db.run(`ROLLBACK TO ${savepoint}`);
         this.#log("debug", `Rolled back to savepoint: ${savepoint}`);
+        this.#rolledBack++;
         throw originalError;
       }
 

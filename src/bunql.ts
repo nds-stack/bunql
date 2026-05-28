@@ -80,6 +80,12 @@ export class BunQL {
     this.#config = config;
     this.#logger = config.logger;
 
+    if (config.readerPoolSize > 0 && !config.wal) {
+      throw new ConnectionError(
+        "Reader pool requires WAL mode. Set `wal: true` or remove `readerPool` option.",
+      );
+    }
+
     try {
       if (config.readonly) {
         this.#db = new Database(path, { readonly: true });
@@ -93,7 +99,7 @@ export class BunQL {
       );
     }
 
-    if (config.wal) {
+    if (config.wal && !config.readonly) {
       this.#db.run("PRAGMA journal_mode=WAL");
     }
 
@@ -128,11 +134,6 @@ export class BunQL {
     this.#fts5 = new FTS5Helper(this.#db);
 
     if (config.readerPoolSize > 0) {
-      if (!config.wal) {
-        throw new ConnectionError(
-          "Reader pool requires WAL mode. Set `wal: true` or remove `readerPool` option.",
-        );
-      }
       this.#readerPool = new ReaderPool(path, config.readerPoolSize);
     }
 

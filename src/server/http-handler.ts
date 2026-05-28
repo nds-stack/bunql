@@ -99,7 +99,12 @@ export function createHandler(bunql: BunQL, options: ServerOptions): (req: Reque
       return errorResponse("Unauthorized", 401);
     }
 
-    const url = new URL(req.url);
+    let url: URL;
+    try {
+      url = new URL(req.url);
+    } catch {
+      return errorResponse("Invalid URL", 400);
+    }
 
     if (req.method === "GET" && url.pathname === "/health") {
       return jsonResponse({

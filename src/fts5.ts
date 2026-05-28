@@ -63,7 +63,7 @@ export class FTS5Helper {
       if (base && /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(base)) return `"${table}"."${base}"${dir}`;
     }
     if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(order)) return `"${order}"`;
-    return "rank";
+    throw new Error(`Invalid FTS5 orderBy: "${order}". Valid: rank, rank DESC, rowid, rowid DESC, or column name.`);
   }
 
   search<T = FTSResult>(
