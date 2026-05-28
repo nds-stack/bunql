@@ -89,7 +89,7 @@ await db.transaction(async (tx) => {
 
 | Scenario | Recommendation |
 |----------|---------------|
-| **High write throughput (>1000/s)** | Use PostgreSQL or MySQL. SQLite is single-writer. |
+| **High write throughput with true concurrency** | SQLite is single-writer. Use PostgreSQL/MySQL if you need parallel write scaling. |
 | **Multi-process access** | Use a client-server database, or coordinate via external locking. |
 | **Distributed systems** | SQLite is embedded, not networked. Use a network database. |
 | **ORM features needed** | Consider [Drizzle](https://orm.drizzle.team) or [Kysely](https://kysely.dev) with the `bun:sqlite` driver. |
@@ -111,12 +111,12 @@ import { BunQL } from "@nds-stack/bunql";
 const db = new BunQL("./app.db");
 
 // Create table
-await db.run(
+db.run(
   "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)"
 );
 
 // Insert
-await db.run("INSERT INTO users (name) VALUES (?)", ["Alice"]);
+db.run("INSERT INTO users (name) VALUES (?)", ["Alice"]);
 
 // Query (synchronous, uses statement cache)
 const users = db.query<{ id: number; name: string }>(
@@ -127,8 +127,8 @@ const users = db.query<{ id: number; name: string }>(
 
 // Transaction (atomatically rolls back on error)
 await db.transaction(async (tx) => {
-  await tx.run("INSERT INTO users (name) VALUES (?)", ["Bob"]);
-  await tx.run("INSERT INTO users (name) VALUES (?)", ["Charlie"]);
+  tx.run("INSERT INTO users (name) VALUES (?)", ["Bob"]);
+  tx.run("INSERT INTO users (name) VALUES (?)", ["Charlie"]);
 });
 
 // Prepared statement (cached, reusable)
@@ -168,11 +168,11 @@ import { BunQL } from "@nds-stack/bunql";
 
 const db = new BunQL("./app.db");
 
-const writes = Array.from({ length: 100 }, (_, i) =>
-  db.run("INSERT INTO logs (message) VALUES (?)", [`event-${i}`])
-);
-await Promise.all(writes);
-// All 100 writes succeed — synchronous, sequential execution.
+// All writes are synchronous and sequential — no queue, no retry
+for (let i = 0; i < 100; i++) {
+  db.run("INSERT INTO logs (message) VALUES (?)", [`event-${i}`]);
+}
+// All 100 writes succeed — direct stmt.run() on each call.
 ```
 
 ### Transaction with Error Recovery
@@ -184,8 +184,8 @@ const db = new BunQL("./app.db");
 
 try {
   await db.transaction(async (tx) => {
-    await tx.run("UPDATE accounts SET balance = balance - 100 WHERE id = 1");
-    await tx.run("UPDATE accounts SET balance = balance + 100 WHERE id = 2");
+    tx.run("UPDATE accounts SET balance = balance - 100 WHERE id = 1");
+    tx.run("UPDATE accounts SET balance = balance + 100 WHERE id = 2");
   });
 } catch (error) {
   // Original error is re-thrown directly — no TransactionError wrapper
@@ -200,16 +200,14 @@ import { BunQL } from "@nds-stack/bunql";
 
 const db = new BunQL("./app.db", {
   retry: { maxRetries: 3 },
+  slowQueryThreshold: 100,
   events: {
     onBusy: (attempt, delayMs) => {
       console.log(`Busy, retrying in ${delayMs}ms (attempt ${attempt + 1})`);
     },
     onDrain: () => console.log("Write queue drained"),
     onError: (err) => console.error("Operation failed:", err),
-  },
-  hooks: {
-    beforeWrite: (sql) => console.log("Writing:", sql),
-    afterWrite: (sql, _params, ms) => console.log(`  took ${ms.toFixed(1)}ms`),
+    onSlowQuery: (sql, ms) => console.warn(`Slow query (${ms}ms):`, sql),
   },
 });
 ```
@@ -361,7 +359,7 @@ new BunQL(path: string, options?: BunQLOptions)
 | `synchronous` | `'OFF' \| 'NORMAL' \| 'FULL' \| 'EXTRA'` | `'NORMAL'` | Synchronous mode (NORMAL recommended for WAL) |
 | `cacheSize` | `number` | `-2000` | Page cache size (negative = KB, -2000 = 2MB) |
 | `foreignKeys` | `boolean` | `true` | Enforce FOREIGN KEY constraints |
-| `retry` | `RetryConfig` | — | Retry policy for SQLITE_BUSY |
+| `retry` | `RetryConfig` | — | Retry policy for SQLITE_BUSY (transaction/batch/exec/backup/vacuum only — `run()` bypasses retry) |
 | `readerPool` | `number` | `0` | Number of read-only connections for parallel reads (`0` = disabled) |
 | `maintenance` | `MaintenanceConfig` | — | Auto-scheduler for checkpoint, vacuum, backup, integrity check |
 | `slowQueryThreshold` | `number` | `0` | Slow query threshold in ms (`0` = disabled). Triggers `onSlowQuery` event |
@@ -493,6 +491,37 @@ interface FTSResult {
 + db.fts.insert("articles", { title: "...", body: "..." });
 ```
 
+### `run()` is synchronous
+
+```diff
+- import { BunQL } from "@nds-stack/bunql";
+-
+- // v0.1.x: run() was async (wrapped in Promise)
+- await db.run("INSERT INTO users (name) VALUES (?)", ["Alice"]);
+- const result = await db.run("INSERT INTO users (name) VALUES (?)", ["Bob"]);
++ // v0.2.0: run() is synchronous — direct to bun:sqlite
++ db.run("INSERT INTO users (name) VALUES (?)", ["Alice"]);
++ const result = db.run("INSERT INTO users (name) VALUES (?)", ["Bob"]);
++ // result: { changes: 1, lastInsertRowid: 2, durationMs: 0.0 }
+```
+
+### `beforeWrite` / `afterWrite` hooks no longer called by `run()`
+
+```diff
+  const db = new BunQL("./app.db", {
+-   hooks: {
+-     beforeWrite: (sql) => console.log("Writing:", sql),
+-     afterWrite: (sql, params, ms) => console.log(`Done in ${ms}ms`),
+-   },
+  });
+```
+
+These hooks are no longer called by `run()` since v0.2.0 (sync path has no hook point). They are still called for operations inside `batch()`. The `beforeTransaction` / `afterTransaction` hooks remain for transaction monitoring.
+
+### WriteQueue no longer used for `run()`
+
+The `WriteQueue` is now only used for operations that need serialization: `transaction()`, `batch()`, `exec()`, `backup()`, `vacuum()`, `checkpoint()`. Individual writes (`run()`) bypass the queue entirely.
+
 ### Reader pool requires WAL mode
 
 ```typescript
@@ -515,18 +544,20 @@ const db = new BunQL("./app.db", {
         │          │              │               │
         ▼          ▼              ▼               ▼
  ┌──────────┐  ┌──────────┐  ┌──────────────┐  ┌──────────┐
- │ Statement│  │----------│  │ WriteQueue   │  │   raw    │
- │  Cache   │  │ NO QUEUE │  │  (tx/batch/  │  │ (getter) │
- │ (LRU/100)│  │   NO     │  │   exec)      │  │  direct  │
- │          │  │  RETRY   │  │  +SAVEPOINT  │  │  access  │
- └────┬─────┘  └──────────┘  └──────┬───────┘  └────┬─────┘
-      │                             │               │
-      │                             ▼               │
-      │                    ┌─────────────────┐      │
-      └────────────────────│  bun:sqlite     │──────┘
-                           │  (WAL mode)     │
-                           │  + PRAGMA opts  │
-                           └─────────────────┘
+ │ Statement│  │ Statement│  │ WriteQueue   │  │   raw    │
+ │  Cache   │  │  Cache   │  │  (tx/batch/  │  │ (getter) │
+ │ (LRU/100)│  │  (+pool) │  │   exec)      │  │  direct  │
+ │          │  │          │  │  +SAVEPOINT  │  │  access  │
+ └────┬─────┘  └────┬─────┘  └──────┬───────┘  └────┬─────┘
+      │             │               │               │
+      └─────────────┴───────────────┴───────────────┘
+                     │
+                     ▼
+            ┌─────────────────┐
+            │  bun:sqlite     │
+            │  (WAL mode)     │
+            │  + PRAGMA opts  │
+            └─────────────────┘
 ```
 
 ### Write Flow
@@ -539,6 +570,10 @@ db.run(sql, params)
   → stmt.run(params)
   → return { changes, lastInsertRowid }
 ```
+
+### Read Flow
+
+`query()` also bypasses WriteQueue — synchronous read via statement cache. When `readerPool > 0`, reads route through **ReaderPool** (round-robin across read-only connections) for parallel-safe concurrent reads.
 
 ### Transaction Flow
 
@@ -610,7 +645,7 @@ const db = new BunQL("./app.db", {
 });
 ```
 
-Note: `beforeWrite` / `afterWrite` hooks were removed in v0.2.0 — writes are synchronous, no queue overhead.
+Note: `beforeWrite` / `afterWrite` hooks no longer apply to `run()` since v0.2.0 — writes are synchronous. The hooks still work for `batch()` operations.
 
 ### Events
 
@@ -623,10 +658,6 @@ const db = new BunQL("./app.db", {
   events: {
     onBusy: (attempt, delayMs) => metrics.increment("db_busy"),   // fires during transactions/queue ops
     onDrain: () => console.log("Queue empty"),                     // fires after tx/batch complete
-    onError: (err) => sentry.captureException(err),
-    onSlowQuery: (sql, ms) => console.warn(`Slow query (${ms}ms):`, sql),
-  },
-});
     onError: (err) => sentry.captureException(err),
     onSlowQuery: (sql, ms) => console.warn(`Slow query (${ms}ms):`, sql),
   },
@@ -660,7 +691,7 @@ The LRU cache holds up to 100 prepared statements. No config knob — the limit 
 >
 > `better-sqlite3` and `node:sqlite` are **synchronous blocking** APIs — writes execute sequentially on the main thread via `setImmediate` scheduling. No true concurrency occurs (no overlap, no SQLITE_BUSY). Concurrent numbers reflect event loop overhead, not parallel throughput. Compare with `bun:sqlite` (raw) and Manual retry for fair async concurrency benchmarks.
 >
-> Concurrent writes use manual retry loop (max 5 attempts, exponential backoff). BunQL eliminates manual retry — writes are serialized, reads are parallel.
+> Concurrent writes use manual retry loop (max 5 attempts, exponential backoff). BunQL `run()` is synchronous — no retry needed. For queue-based operations (`transaction`, `batch`, `exec`), retry is handled automatically.
 >
 > **Hardware matters.** Official better-sqlite3 benchmark reports 314K read / 62.6K write on macOS (SSD). Our 294K / 40.8K on Windows NVMe is consistent — macOS I/O stack has lower `fsync` latency for SQLite commits.
 
@@ -690,7 +721,10 @@ BunQLError (base)
 import { BunQL, BusyError, ConnectionError } from "@nds-stack/bunql";
 
 try {
-  await db.run("INSERT INTO logs (msg) VALUES (?)", ["hello"]);
+  await db.batch([
+    { sql: "INSERT INTO logs (msg) VALUES (?)", params: ["hello"] },
+    { sql: "INSERT INTO logs (msg) VALUES (?)", params: ["world"] },
+  ]);
 } catch (err) {
   if (err instanceof BusyError) {
     console.error("Database busy after retries:", err.cause);
@@ -771,10 +805,12 @@ import { BunQLServer } from "@nds-stack/bunql/server";
 const db = new BunQL("./app.db");
 const server = new BunQLServer(db, { port: 3000, secret: "my-api-key" });
 server.start();
-// → HTTP endpoint: http://localhost:3000 — serialized through one BunQL instance
+// → HTTP endpoint: http://localhost:3000
+//   - read/query routes: direct — no queue
+//   - transaction/batch/exec routes: serialized through WriteQueue
 ```
 
-Each HTTP request enters the same `WriteQueue`, ensuring serialized writes across all API consumers.
+Write operations via the `/run` endpoint are synchronous (direct to `bun:sqlite`). Transaction and batch operations via `/tx`, `/batch`, `/exec` endpoints are serialized through the same `WriteQueue`.
 
 ---
 
