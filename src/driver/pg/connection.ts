@@ -72,12 +72,11 @@ export class PGConnection {
 
     for (let attempts = 0; attempts < 100; attempts++) {
       const raw = await this.#readBuffer();
-      const newReader = new PGReader(concat([reader.buffer.subarray(reader.offset), raw]));
-      reader.buffer.set(newReader.buffer);
-      reader.offset = 0;
+      const combined = concat([reader.buffer.subarray(reader.offset), raw]);
+      const newReader = new PGReader(combined);
 
-      while (reader.hasMessage()) {
-        const msg = reader.readMessage()!;
+      while (newReader.hasMessage()) {
+        const msg = newReader.readMessage()!;
 
         switch (msg.type) {
           case "AuthenticationOk":
@@ -105,6 +104,12 @@ export class PGConnection {
           default:
             continue;
         }
+      }
+
+      // Carry over unprocessed data
+      if (newReader.available > 0) {
+        const buf = new PGReader(new Uint8Array(newReader.buffer.subarray(newReader.offset)));
+        Object.assign(reader, buf);
       }
     }
     throw new PGError("Auth timeout");

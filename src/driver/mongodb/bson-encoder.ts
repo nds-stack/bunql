@@ -169,7 +169,7 @@ export function encodeBSON(value: unknown): Uint8Array {
 }
 
 export function encodeBSONCommand(db: string, command: Record<string, unknown>): Uint8Array {
-  const doc: Record<string, unknown> = { $db: db, ...command };
+  const doc: Record<string, unknown> = { ...command, $db: db };
   return encodeDocument(doc);
 }
 

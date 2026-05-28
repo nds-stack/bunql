@@ -172,7 +172,7 @@ export function encodeHandshakeResponse(
 ): Uint8Array {
   const capabilities = CLIENT_PROTOCOL_41 | CLIENT_SECURE_CONNECTION | CLIENT_PLUGIN_AUTH | CLIENT_PLUGIN_AUTH_LENENC | CLIENT_CONNECT_WITH_DB | CLIENT_DEPRECATE_EOF;
   const scramble = concatBytes(handshake.authData1, handshake.authData2);
-  const authResp = nativePasswordAuth(params.password, scramble);
+  const authResp = params.password ? nativePasswordAuth(params.password, scramble) : new Uint8Array(0);
 
   const payloadChunks: Uint8Array[] = [
     uint32LE(capabilities),
