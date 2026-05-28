@@ -155,7 +155,7 @@ export class BunQL {
     );
     this.#fts5 = new FTS5Helper(this.#db);
 
-    if (config.readerPoolSize > 0) {
+    if (config.readerPoolSize > 0 && !options?.dbInstance) {
       this.#readerPool = new ReaderPool(path, config.readerPoolSize);
     }
 
