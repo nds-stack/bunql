@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-05-28
+
+### Documentation
+- Add dedicated "Error Handling" section with error hierarchy and catch patterns
+- Add "Customization" section covering logger, hooks, events, cache tuning
+- Add "Multi-Instance / Cross-Process" section with worker/process guidance
+- Fix PROJECT.md FTS5 examples (sync since v0.1.0)
+- Fix RULES.md folder diagram (add fts5.ts, reader-pool.ts, server/)
+- Sync all docs version to 0.1.2
+
 ## [0.1.1] - 2026-05-18
 
 ### Fixed
