@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added (v0.6.0 — PostgreSQL Driver)
+- **Custom PostgreSQL wire protocol (v3.0)** — zero npm dependencies, big-endian network byte order:
+  - **StartupMessage** — protocol version 3.0, user/database params
+  - **Auth exchange** — trust (no password), clear text, MD5 (`md5(md5(password+user)+salt)`)
+  - **Pure JS MD5** — RFC 1321 implementation, zero deps
+  - **SimpleQuery** — send SQL, receive RowDescription + DataRow + CommandComplete + ReadyForQuery
+  - **ErrorResponse parsing** — severity, SQLSTATE code, message
+- **TCP connection + pool** — `Bun.connect()` with auth handshake + deadline timeout
+- **PGDriver class** — `query(sql)` / `run(sql)` via SQL→PG wire protocol
+- **`@nds-stack/bunql/driver` exports** — `PGDriver`, `PGConnectionPool`, `PGError`
+- **bunql.ts auto-detect** — `postgres://` and `postgresql://` URLs throw helpful error
+- **SQL param interpolation** — `?` → escaped inline values (PG simple query protocol)
+- **Driver tests** — 15 tests: wire protocol encode/decode, URL parsing, error connection
+
 ### Added (v0.4.2 — Redis Driver)
 - **Custom Redis driver** — zero npm dependencies, built via `Bun.connect()`:
   - **RESP encoder/decoder** — Simple String, Error, Integer, Bulk String ($-1 null), Array (batch/nested)
@@ -44,11 +58,12 @@
 - **Parser + translator tests** — 44 new tests covering lexer, SQL parsing, MQL parsing, all 3 translators, SQL↔MongoDB round-trip
 
 ### Changed
-- Bundle size: 42.2KB core (unchanged), 5.1KB server (unchanged), 63.3KB driver (+17.7KB for Redis)
-- Tests: 239 (was 214) — 25 new Redis driver tests
-- Files: 4 new Redis driver files
-- `@nds-stack/bunql/driver` now exports RedisDriver alongside MongoDriver
-- README: Redis status updated to ✅ Production, Redis Quick Start added
+- Bundle size: 80.6KB core (+38KB for parser + query builder), 5.1KB server, 82.8KB driver (+19KB for PG)
+- Tests: 282 (was 267)
+- Files: 4 new PG driver files (+943 LOC)
+- `@nds-stack/bunql/driver` now exports PGDriver alongside MongoDriver/RedisDriver
+- README: PostgreSQL status updated to ✅ Production, PG Quick Start added
+- TODO.md: Phase 5 milestone added
 
 ### Fixed (v0.4.2)
 - **Redis:** `#tryResolvePending` catch block silently swallowed errors — orphaned connection Promise hangs forever. Fixed with proper error rejection + buffer cleanup
