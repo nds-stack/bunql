@@ -773,7 +773,7 @@ Each HTTP request enters the same `WriteQueue`, ensuring serialized writes acros
 ## Stability
 
 - **v0.2.0 (stable)** — BREAKING: sync `run()`, honest architecture — no fake concurrency safety
-- **111 tests** — unit, integration, concurrency, stress, FTS5, reader pool
+- **109 tests** — unit, integration, concurrency, stress, FTS5, reader pool
 - **5000 sequential writes** — verified stable
 - **Graceful shutdown** — drain queue → finalize statements → close DB
 - **Memory safe** — LRU cache eviction, `yocto-queue` linked-list, no unbounded growth
