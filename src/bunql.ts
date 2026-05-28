@@ -107,8 +107,17 @@ export class BunQL {
 
     if (path.startsWith("redis://") || path.startsWith("rediss://")) {
       throw new Error(
-        "Redis driver is available via MongoDriver pattern (details in upcoming release). " +
-        "For now use BunQL with SQLite.",
+        "Redis driver is available as RedisDriver: " +
+        `import { RedisDriver } from "@nds-stack/bunql/driver"; ` +
+        `const db = new RedisDriver("${path}");`,
+      );
+    }
+
+    if (path.startsWith("postgres://") || path.startsWith("postgresql://")) {
+      throw new Error(
+        "PostgreSQL driver is available as PGDriver: " +
+        `import { PGDriver } from "@nds-stack/bunql/driver"; ` +
+        `const db = new PGDriver("${path}");`,
       );
     }
 
