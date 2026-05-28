@@ -58,6 +58,7 @@ export class TransactionManager {
       this.#depth++;
       const startTime = performance.now();
       const stmtCache = new Map<string, BunStatement>();
+      // eslint-disable-next-line no-useless-assignment
       let began = false;
       try {
         this.#hooks?.beforeTransaction?.();

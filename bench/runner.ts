@@ -2,7 +2,7 @@
 import { Database } from "bun:sqlite";
 import { BunQL } from "../src/bunql.ts";
 import initSqlJs from "sql.js";
-import { unlinkSync, mkdirSync, existsSync } from "fs";
+import { unlinkSync, mkdirSync } from "fs";
 
 const BENCH_DIR = "bench/tmp";
 const ITERATIONS = 5000;
@@ -58,10 +58,6 @@ function runMulti<T>(fn: () => T): { result: T; timings: number[] } {
     timings.push(performance.now() - start);
   }
   return { result, timings };
-}
-
-function syncOps(timings: number[]): number {
-  return (ITERATIONS / median(timings)) * 1000;
 }
 
 async function asyncOps(fn: () => Promise<void>): Promise<Stats> {

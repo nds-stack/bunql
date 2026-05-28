@@ -10,7 +10,7 @@ export default [
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    ignores: ["dist/"],
+    ignores: ["dist/", "bench/node-*.cjs", "bench/deno-sqlite.ts", "test/tmp/", "bench/tmp/"],
   },
   {
     files: ["**/*.ts"],
