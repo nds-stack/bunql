@@ -1,0 +1,182 @@
+/**
+ * @module test-sql-parser
+ * @description Tests for SQL parser — lexer + parser.
+ */
+import { describe, test, expect } from "bun:test";
+import { parseSQL } from "../../src/parser/sql-parser.ts";
+import { Lexer } from "../../src/parser/sql-lexer.ts";
+import type { SelectNode, InsertNode, UpdateNode, DeleteNode, ASTNode } from "../../src/ast/ast.ts";
+
+describe("Lexer", () => {
+  test("tokenizes simple SELECT", () => {
+    const lex = new Lexer("SELECT id, name FROM users");
+    const tokens = lex.all().filter((t) => t.type !== "eof");
+    expect(tokens[0]!.value).toBe("select");
+    expect(tokens[1]!.value).toBe("id");
+    expect(tokens[2]!.value).toBe(",");
+    expect(tokens[5]!.value).toBe("users");
+  });
+
+  test("tokenizes INSERT", () => {
+    const lex = new Lexer("INSERT INTO users (name) VALUES ('Alice')");
+    const tokens = lex.all().filter((t) => t.type !== "eof");
+    expect(tokens[0]!.value).toBe("insert");
+    expect(tokens[2]!.value).toBe("users");
+    expect(tokens[8]!.value).toBe("Alice");
+  });
+
+  test("tokenizes WHERE conditions", () => {
+    const lex = new Lexer("WHERE age > 25 AND name = 'Bob'");
+    const tokens = lex.all().filter((t) => t.type !== "eof");
+    expect(tokens[0]!.value).toBe("where");
+    expect(tokens[2]!.value).toBe(">");
+    expect(tokens[4]!.value).toBe("and");
+  });
+
+  test("tokenizes operators", () => {
+    const lex = new Lexer(">= <= <> !=");
+    const tokens = lex.all().filter((t) => t.type !== "eof");
+    expect(tokens[0]!.value).toBe(">=");
+    expect(tokens[1]!.value).toBe("<=");
+    expect(tokens[2]!.value).toBe("<>");
+  });
+
+  test("tokenizes numbers", () => {
+    const lex = new Lexer("42 3.14");
+    const tokens = lex.all().filter((t) => t.type !== "eof");
+    expect(tokens[0]!.value).toBe("42");
+    expect(tokens[1]!.value).toBe("3.14");
+  });
+
+  test("peek does not consume", () => {
+    const lex = new Lexer("SELECT 1");
+    const peeked = lex.peek();
+    expect(peeked.value).toBe("select");
+    const next = lex.next();
+    expect(next.value).toBe("select");
+  });
+
+  test("skips single-line comments", () => {
+    const lex = new Lexer("-- comment\nSELECT 1");
+    const tokens = lex.all().filter((t) => t.type !== "eof");
+    expect(tokens[0]!.value).toBe("select");
+  });
+});
+
+describe("SQL Parser", () => {
+  const asSelect = (ast: ASTNode): SelectNode => {
+    if (ast.type !== "select") throw new Error(`Expected select, got ${ast.type}`);
+    return ast;
+  };
+  const asInsert = (ast: ASTNode): InsertNode => {
+    if (ast.type !== "insert") throw new Error(`Expected insert, got ${ast.type}`);
+    return ast;
+  };
+  const asUpdate = (ast: ASTNode): UpdateNode => {
+    if (ast.type !== "update") throw new Error(`Expected update, got ${ast.type}`);
+    return ast;
+  };
+  const asDelete = (ast: ASTNode): DeleteNode => {
+    if (ast.type !== "delete") throw new Error(`Expected delete, got ${ast.type}`);
+    return ast;
+  };
+
+  test("parses simple SELECT", () => {
+    const ast = asSelect(parseSQL("SELECT id, name FROM users"));
+    expect(ast.columns.length).toBe(2);
+    expect(ast.from.name).toBe("users");
+  });
+
+  test("parses SELECT *", () => {
+    const ast = asSelect(parseSQL("SELECT * FROM users"));
+    expect(ast.columns[0]!.type).toBe("wildcard");
+  });
+
+  test("parses SELECT with WHERE", () => {
+    const ast = asSelect(parseSQL("SELECT name FROM users WHERE age > 25"));
+    expect(ast.where).toBeDefined();
+    expect(ast.where!.type).toBe("gt");
+  });
+
+  test("parses SELECT with WHERE AND", () => {
+    const ast = asSelect(parseSQL("SELECT * FROM users WHERE age > 25 AND active = true"));
+    expect(ast.where).toBeDefined();
+    expect(ast.where!.type).toBe("and");
+  });
+
+  test("parses SELECT with ORDER BY and LIMIT", () => {
+    const ast = asSelect(parseSQL("SELECT * FROM users ORDER BY name DESC LIMIT 10"));
+    expect(ast.orderBy).toBeDefined();
+    expect(ast.orderBy![0]!.direction).toBe("desc");
+    expect(ast.limit).toBe(10);
+  });
+
+  test("parses SELECT with GROUP BY", () => {
+    const ast = asSelect(parseSQL("SELECT status, COUNT(*) FROM orders GROUP BY status"));
+    expect(ast.groupBy).toBeDefined();
+    expect(ast.groupBy!.length).toBe(1);
+  });
+
+  test("parses SELECT with JOIN", () => {
+    const ast = asSelect(parseSQL("SELECT u.name, o.total FROM users u LEFT JOIN orders o ON u.id = o.user_id"));
+    expect(ast.joins).toBeDefined();
+    expect(ast.joins![0]!.type).toBe("left");
+  });
+
+  test("parses INSERT", () => {
+    const ast = asInsert(parseSQL("INSERT INTO users (name, email) VALUES ('Alice', 'a@t.com')"));
+    expect(ast.table).toBe("users");
+    expect(ast.columns).toEqual(["name", "email"]);
+  });
+
+  test("parses UPDATE", () => {
+    const ast = asUpdate(parseSQL("UPDATE users SET name = 'Bob' WHERE id = 1"));
+    expect(ast.table).toBe("users");
+    expect(ast.where).toBeDefined();
+  });
+
+  test("parses DELETE", () => {
+    const ast = asDelete(parseSQL("DELETE FROM users WHERE id = 1"));
+    expect(ast.table).toBe("users");
+  });
+
+  test("parses LIKE condition", () => {
+    const ast = asSelect(parseSQL("SELECT * FROM users WHERE name LIKE 'A%'"));
+    expect(ast.where!.type).toBe("like");
+  });
+
+  test("parses IN condition", () => {
+    const ast = asSelect(parseSQL("SELECT * FROM users WHERE id IN (1, 2, 3)"));
+    expect(ast.where!.type).toBe("in");
+  });
+
+  test("parses BETWEEN condition", () => {
+    const ast = asSelect(parseSQL("SELECT * FROM users WHERE age BETWEEN 18 AND 65"));
+    expect(ast.where!.type).toBe("between");
+  });
+
+  test("parses IS NULL", () => {
+    const ast = asSelect(parseSQL("SELECT * FROM users WHERE email IS NULL"));
+    expect(ast.where!.type).toBe("isNull");
+  });
+
+  test("parses SELECT DISTINCT", () => {
+    const ast = asSelect(parseSQL("SELECT DISTINCT status FROM orders"));
+    expect(ast.distinct).toBe(true);
+  });
+
+  test("parses SELECT with OFFSET", () => {
+    const ast = asSelect(parseSQL("SELECT * FROM users LIMIT 10 OFFSET 20"));
+    expect(ast.limit).toBe(10);
+    expect(ast.offset).toBe(20);
+  });
+
+  test("throws on invalid SQL", () => {
+    expect(() => parseSQL("INVALID SQL HERE")).toThrow();
+  });
+
+  test("parses SELECT with table alias", () => {
+    const ast = asSelect(parseSQL("SELECT u.id FROM users u"));
+    expect(ast.from.alias).toBe("u");
+  });
+});
