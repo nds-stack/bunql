@@ -5,6 +5,8 @@
 
 import { buildCommand, parseResponse, readHeader } from "./wire-protocol";
 import { performScramSha256 } from "./auth-scram";
+import { MongoError } from "./error";
+import { ConnectionPool } from "./pool";
 import { encodeBSON } from "./bson-encoder";
 
 export interface MongoConnectionConfig {
@@ -236,77 +238,3 @@ export class MongoConnection {
   }
 }
 
-export class ConnectionPool {
-  readonly config: MongoConnectionConfig;
-  #connections: MongoConnection[] = [];
-  #maxSize: number;
-  #active = 0;
-  #poolTimeoutMs: number;
-
-  constructor(config: MongoConnectionConfig) {
-    this.config = config;
-    this.#maxSize = config.maxPoolSize ?? 5;
-    this.#poolTimeoutMs = config.connectionTimeoutMs ?? 30000;
-  }
-
-  get totalConnections(): number {
-    return this.#connections.length + this.#active;
-  }
-
-  async acquire(): Promise<MongoConnection> {
-    const deadline = Date.now() + this.#poolTimeoutMs;
-
-    while (Date.now() < deadline) {
-      while (this.#connections.length > 0) {
-        const conn = this.#connections.pop()!;
-        if (conn.connected) {
-          this.#active++;
-          return conn;
-        }
-        conn.close();
-      }
-
-      if (this.totalConnections < this.#maxSize) {
-        const conn = new MongoConnection(this.config);
-        await conn.connect();
-        this.#active++;
-        return conn;
-      }
-
-      await Bun.sleep(10);
-    }
-
-    throw new MongoError(
-      `Connection pool exhausted: timed out after ${this.#poolTimeoutMs}ms waiting for connection`,
-      -2,
-      {},
-    );
-  }
-
-  release(conn: MongoConnection): void {
-    this.#active--;
-    if (conn.connected) {
-      this.#connections.push(conn);
-    }
-  }
-
-  async closeAll(): Promise<void> {
-    await Promise.all(this.#connections.map((c) => c.close()));
-    this.#connections = [];
-    this.#active = 0;
-  }
-}
-
-export class MongoError extends Error {
-  readonly code: number;
-  readonly response: Record<string, unknown>;
-
-  constructor(message: string, code?: number, response?: Record<string, unknown>) {
-    super(message);
-    this.name = "MongoError";
-    this.code = code ?? -1;
-    this.response = response ?? {};
-  }
-}
-
-export type { };

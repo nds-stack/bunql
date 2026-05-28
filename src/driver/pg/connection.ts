@@ -1,9 +1,13 @@
+import { PGError } from "./error";
+import { PGConnectionPool } from "./pool";
+import { rowsToObjects, concat } from "./helpers";
+
 /**
  * @module driver/pg/connection
  * @description TCP connection + pool for PostgreSQL — custom implementation via Bun.connect().
  */
 
-import { PGReader, encodeStartup, encodePassword, encodeMD5Password, encodeQuery, encodeParse, encodeBind, encodeDescribe, encodeExecute, encodeSync, encodeTerminate, md5Hex, type PGMessage } from "./wire";
+import { PGReader, encodeStartup, encodePassword, encodeMD5Password, encodeQuery, encodeParse, encodeBind, encodeDescribe, encodeExecute, encodeSync, encodeTerminate, type PGMessage, type PGColumn } from "./wire";
 
 const textEncoder = new TextEncoder();
 
@@ -116,8 +120,9 @@ export class PGConnection {
     return new Promise<Uint8Array>((resolve, reject) => {
       this.#pendingResolve = resolve;
       this.#pendingReject = reject;
-    });
-  }
+  });
+}
+
 
   async query(sql: string): Promise<PGQueryResult> {
     if (!this.#socket || this.#closed) throw new Error("Connection closed");
@@ -311,98 +316,8 @@ export interface PGQueryResult {
   commandTag: string;
 }
 
-export interface PGColumn {
-  name: string;
-}
 
-export class PGConnectionPool {
-  readonly config: PGConnectionConfig;
-  #connections: PGConnection[] = [];
-  #maxSize: number;
-  #active = 0;
-  #poolTimeoutMs: number;
 
-  constructor(config: PGConnectionConfig) {
-    this.config = config;
-    this.#maxSize = config.maxPoolSize ?? 5;
-    this.#poolTimeoutMs = config.connectionTimeoutMs ?? 30000;
-  }
 
-  get totalConnections(): number {
-    return this.#connections.length + this.#active;
-  }
 
-  async acquire(): Promise<PGConnection> {
-    const deadline = Date.now() + this.#poolTimeoutMs;
 
-    while (Date.now() < deadline) {
-      while (this.#connections.length > 0) {
-        const conn = this.#connections.pop()!;
-        if (conn.connected) {
-          this.#active++;
-          return conn;
-        }
-        conn.close();
-      }
-
-      if (this.totalConnections < this.#maxSize) {
-        const conn = new PGConnection(this.config);
-        await conn.connect();
-        this.#active++;
-        return conn;
-      }
-
-      await Bun.sleep(10);
-    }
-
-    throw new PGError(`Connection pool exhausted: timed out after ${this.#poolTimeoutMs}ms`);
-  }
-
-  release(conn: PGConnection): void {
-    this.#active--;
-    if (conn.connected) {
-      this.#connections.push(conn);
-    }
-  }
-
-  async closeAll(): Promise<void> {
-    await Promise.all(this.#connections.map((c) => c.close()));
-    this.#connections = [];
-    this.#active = 0;
-  }
-}
-
-export class PGError extends Error {
-  readonly code?: string;
-
-  constructor(message: string, code?: string) {
-    super(message);
-    this.name = "PGError";
-    this.code = code;
-  }
-}
-
-function rowsToObjects(columns: PGColumn[], rows: (Uint8Array | null)[][]): Record<string, unknown>[] {
-  const textDecoder = new TextDecoder();
-  return rows.map((row) => {
-    const obj: Record<string, unknown> = {};
-    for (let i = 0; i < columns.length && i < row.length; i++) {
-      const val = row[i];
-      obj[columns[i]!.name] = val === null ? null : textDecoder.decode(val);
-    }
-    return obj;
-  });
-}
-
-function concat(chunks: Uint8Array[]): Uint8Array {
-  const total = chunks.reduce((s, c) => s + c.length, 0);
-  const result = new Uint8Array(new ArrayBuffer(total));
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return result;
-}
-
-export type { };

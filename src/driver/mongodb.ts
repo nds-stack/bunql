@@ -4,7 +4,8 @@
  */
 
 import type { DriverAdapter, QueryResult, RunResult } from "./adapter.ts";
-import { ConnectionPool, type MongoConnectionConfig } from "./mongodb/connection.ts";
+import { type MongoConnectionConfig } from "./mongodb/connection.ts";
+import { ConnectionPool } from "./mongodb/pool.ts";
 import type { MongoCommand } from "../translator/to-mongodb.ts";
 import { astToMongo } from "../translator/to-mongodb.ts";
 import { parseSQL } from "../parser/sql-parser.ts";

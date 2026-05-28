@@ -4,7 +4,9 @@
  */
 
 import type { DriverAdapter, QueryResult, RunResult } from "./adapter.ts";
-import { MySQLConnectionPool, type MySQLConnectionConfig, MySQLError } from "./mysql/connection.ts";
+import { type MySQLConnectionConfig } from "./mysql/connection.ts";
+import { MySQLConnectionPool } from "./mysql/pool.ts";
+import { MySQLError } from "./mysql/error.ts";
 import { type ResultSetPacket, type ResponsePacket } from "./mysql/wire.ts";
 
 const textEncoder = new TextEncoder();

@@ -4,7 +4,9 @@
  */
 
 import type { DriverAdapter, QueryResult, RunResult } from "./adapter.ts";
-import { RedisConnectionPool, type RedisConnectionConfig, RedisError } from "./redis/connection.ts";
+import { type RedisConnectionConfig } from "./redis/connection.ts";
+import { RedisConnectionPool } from "./redis/pool.ts";
+import { RedisError } from "./redis/error.ts";
 import type { RESPValue } from "./redis/resp.ts";
 import { astToRedis } from "../translator/to-redis.ts";
 import { parseSQL } from "../parser/sql-parser.ts";
