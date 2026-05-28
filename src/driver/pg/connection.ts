@@ -251,6 +251,13 @@ export class PGConnection {
     throw new PGError("Query timeout");
   }
 
+  async begin(): Promise<void> { await this.query("BEGIN"); }
+  async commit(): Promise<void> { await this.query("COMMIT"); }
+  async rollback(): Promise<void> { await this.query("ROLLBACK"); }
+  async savepoint(name: string): Promise<void> { await this.query(`SAVEPOINT "${name}"`); }
+  async releaseSavepoint(name: string): Promise<void> { await this.query(`RELEASE SAVEPOINT "${name}"`); }
+  async rollbackTo(name: string): Promise<void> { await this.query(`ROLLBACK TO SAVEPOINT "${name}"`); }
+
   async close(): Promise<void> {
     this.#closed = true;
     if (this.#pendingReject) {

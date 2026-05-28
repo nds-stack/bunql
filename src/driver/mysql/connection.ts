@@ -89,19 +89,21 @@ export class MySQLConnection {
 
   async query(sql: string): Promise<ResponsePacket> {
     if (!this.#socket || this.#closed) throw new Error("Connection closed");
-
     this.#seq = 0;
     const queryPacket = encodeQueryPacket(this.#seq++, sql);
     this.#socket.write(queryPacket);
-
-    // Read all response packets
     const allData = await this.#readBuffer();
     const packets = assemblePackets(allData);
-
     if (packets.length === 0) throw new MySQLError("Empty response");
-
     return parseResponse(packets);
   }
+
+  async begin(): Promise<ResponsePacket> { return this.query("START TRANSACTION"); }
+  async commit(): Promise<ResponsePacket> { return this.query("COMMIT"); }
+  async rollback(): Promise<ResponsePacket> { return this.query("ROLLBACK"); }
+  async savepoint(name: string): Promise<ResponsePacket> { return this.query(`SAVEPOINT ${name}`); }
+  async releaseSavepoint(name: string): Promise<ResponsePacket> { return this.query(`RELEASE SAVEPOINT ${name}`); }
+  async rollbackTo(name: string): Promise<ResponsePacket> { return this.query(`ROLLBACK TO SAVEPOINT ${name}`); }
 
   async prepare(sql: string): Promise<PrepareOKPacket> {
     if (!this.#socket || this.#closed) throw new Error("Connection closed");

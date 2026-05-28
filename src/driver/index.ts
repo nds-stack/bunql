@@ -12,6 +12,8 @@ export { PGDriver } from "./pg.ts";
 export type { PGDriverOptions } from "./pg.ts";
 export { MySQLDriver } from "./mysql.ts";
 export type { MySQLDriverOptions } from "./mysql.ts";
+export { TransactionManager } from "./transaction.ts";
+export type { TransactionBackend, TxContext } from "./transaction.ts";
 export { MongoError, ConnectionPool as MongoConnectionPool } from "./mongodb/connection.ts";
 export { RedisError, RedisConnectionPool } from "./redis/connection.ts";
 export { PGError, PGConnectionPool } from "./pg/connection.ts";
