@@ -1,13 +1,13 @@
 # @nds-stack/bunql
 
-> **Bun Query Language** — tulis SQL atau MQL, jalan di SQLite, MongoDB, Redis, PostgreSQL, MySQL. Satu query, semua backend.
+> **Bun Query Language** — Write SQL or MQL, run on SQLite, MongoDB, Redis, PostgreSQL, MySQL. One query, all backends.
 
 [![npm version](https://img.shields.io/npm/v/%40nds-stack%2Fbunql?color=blue&logo=npm)](https://www.npmjs.com/package/@nds-stack/bunql)
 [![Bun](https://img.shields.io/badge/Bun-%3E%3D1.3.0-black?logo=bun)](https://bun.sh)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue?logo=typescript)](https://www.typescriptlang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-300-green)]()
-[![Bundle](https://img.shields.io/badge/bundle-80.9KB%20core%20%2F%20114KB%20driver-blue)]()
+[![Tests](https://img.shields.io/badge/tests-308-green)]()
+[![Bundle](https://img.shields.io/badge/bundle-83.1KB%20core%20%2F%20114.7KB%20driver-blue)]()
 
 ---
 
@@ -66,9 +66,9 @@ import { BunQL } from "@nds-stack/bunql";
 // Backend auto-detected from URL
 new BunQL("./app.db");                               // → SQLite
 new BunQL(":memory:");                               // → SQLite (in-memory)
-new BunQL("mongodb://localhost:27017/mydb");         // → MongoDB (future)
-new BunQL("redis://localhost:6379");                 // → Redis (future)
-new BunQL("postgres://localhost:5432/mydb");         // → PostgreSQL (future)
+new BunQL("mongodb://localhost:27017/mydb");         // → MongoDB (via MongoDriver)
+new BunQL("redis://localhost:6379");                 // → Redis (via RedisDriver)
+new BunQL("postgres://localhost:5432/mydb");         // → PostgreSQL (via PGDriver)
 ```
 
 ## Why bunql
@@ -95,7 +95,7 @@ const db = new BunQL("./app.db");
 db.run("INSERT INTO users (name) VALUES (?)", ["Alice"]);
 const users = db.query("SELECT * FROM users WHERE active = ?", [true]);
 
-// Query Builder — Drizzle-compatible API (in development)
+// Query Builder — Drizzle-compatible API (production, v0.5.0)
 db.select().from(users).where(eq(users.active, true)).all();
 ```
 
@@ -242,7 +242,7 @@ await db.exec(`
   INSERT INTO audit VALUES (1, 'migration v2 applied');
 `);
 
-// Raw access — langsung ke bun:sqlite untuk PRAGMA kustom / VACUUM
+// Raw access — direct bun:sqlite for custom PRAGMA / VACUUM
 db.raw.run("PRAGMA cache_size=-8000");
 db.raw.run("VACUUM");
 
@@ -374,7 +374,7 @@ const db = new BunQL("./app.db", {
 
 ### Exec (Multi-Statement SQL)
 
-Muat file skema `.sql` yang berisi banyak perintah sekaligus:
+Load a `.sql` schema file containing multiple statements:
 
 ```typescript
 import { BunQL } from "@nds-stack/bunql";
@@ -403,7 +403,7 @@ await db.transaction(async (tx) => {
 
 ### Raw Database Access
 
-Akses langsung ke instance `Database` dari `bun:sqlite` untuk PRAGMA atau operasi yang tidak di-cover API:
+Direct access to the `bun:sqlite` `Database` instance for PRAGMA or operations not covered by the API:
 
 ```typescript
 import { BunQL } from "@nds-stack/bunql";
@@ -411,7 +411,7 @@ import type { Database } from "bun:sqlite";
 
 const db = new BunQL("./app.db");
 
-// Dapatkan instance Database langsung
+// Get the raw Database instance directly
 const raw: Database = db.raw;
 raw.run("PRAGMA cache_size=-8000");
 raw.run("PRAGMA synchronous=FULL");
@@ -428,7 +428,7 @@ import { BunQL } from "@nds-stack/bunql";
 // Pool of 3 read-only connections, round-robin
 const db = new BunQL("./app.db", { readerPool: 3 });
 
-// Reads otomatis terdistribusi — parallel safe
+// Reads are automatically distributed — parallel safe
 const users = db.query("SELECT * FROM users");
 const posts = db.query("SELECT * FROM posts");
 
@@ -437,7 +437,7 @@ await db.close();
 
 ### FTS5 Full-Text Search
 
-Full-text search via built-in SQLite FTS5 (tanpa dependensi tambahan):
+Full-text search via built-in SQLite FTS5 (no additional dependencies):
 
 ```typescript
 import { BunQL } from "@nds-stack/bunql";
@@ -694,7 +694,7 @@ new BunQL(path: string, options?: BunQLOptions)
 | `walStatus()` | `Promise<WalStatus>` | WAL file size, page info, checkpoint requirement. |
 | `checkpoint(mode)` | `Promise<CheckpointResult>` | Explicit WAL checkpoint (PASSIVE \| FULL \| RESTART \| TRUNCATE). |
 | `backup(path)` | `Promise<BackupResult>` | Online backup via `VACUUM INTO`. Safe, queue-aware. |
-| `raw` | `Database` | Getter — akses langsung ke instance `bun:sqlite`. |
+| `raw` | `Database` | Getter — direct access to the underlying `bun:sqlite` instance. |
 | `fts` | `FTS5Helper` | Getter — FTS5 search helper (create, search, insert, delete, update, rebuild, merge, optimize, drop). |
 | `metrics` | `BunQLMetrics` | Getter — real-time operation counters (writes, reads, txs, queue). |
 | `cacheStats` | `CacheStats` | Getter — statement cache hit/miss/size/rate. |
@@ -928,7 +928,7 @@ const db = new BunQL("./app.db", {
               └─────────────────┘
 ```
 
-### Pipeline: SQL on MongoDB (future)
+### Pipeline: SQL on MongoDB
 
 ```
 User: db.query("SELECT name FROM users WHERE age > 25 LIMIT 10")
@@ -949,7 +949,7 @@ sql-parser.ts  →  AST  →  to-mongodb.ts  →  MongoCommand
 Bun.connect() TCP → MongoDB server → BSON decoded → rows
 ```
 
-### Pipeline: MQL on SQLite (future)
+### Pipeline: MQL on SQLite
 
 ```
 User: db.mql("users").find({age:{$gt:25}}).project({name:1}).limit(10)
@@ -1023,10 +1023,9 @@ db.run(sql, params)
 | Prepared stmts | Manual manage | Auto-cached, reused + `.bind()` + `.iterate()` |
 | PRAGMA calls | `db.run("PRAGMA key")` | `db.pragma("key", { simple: true })` |
 | Serialization | Manual | `db.serialize()` + `BunQL.deserialize()` |
-| Serialization | Manual | `db.serialize()` + `BunQL.deserialize()` |
 | Graceful shutdown | Manual | Drain pending ops + cache finalize |
 | Backend support | SQLite only | SQLite + MongoDB + Redis + PostgreSQL + MySQL — one query language |
-| Bundle size | Built-in | +41.7KB core / +5.1KB server |
+| Bundle size | Built-in | +41.7KB core / +5.1KB server (SQLite only) |
 
 bunql is not a replacement for `bun:sqlite` — it's an **ergonomic layer** on top. You still write raw SQL. The wrapper handles what `bun:sqlite` leaves bare: transactions, statement lifecycle, observability, graceful shutdown.
 
@@ -1200,7 +1199,7 @@ try {
 - **SQL → MongoDB coverage**: Full CRUD, WHERE/JOIN/GROUP BY/ORDER BY/LIMIT. Does NOT cover `$geoNear`, `$text`, `$facet`, `$graphLookup`.
 - **MQL → SQL coverage**: `find`, `aggregate` with `$match`/`$group`/`$sort`/`$limit`/`$lookup`. Does NOT cover `$unwind` (SQLite doesn't have UNNEST), `$sample`, nested sub-document updates.
 - **Redis coverage**: Subset only — `HGETALL`, `HSET`, `DEL`, `ZRANGE`. Complex queries (GROUP BY, JOIN) not supported on Redis.
-- **Drivers in development**: MongoDB (v0.4.1), Redis (v0.4.2). Currently only SQLite driver is production-ready.
+- **Drivers**: All 4 network drivers (MongoDB, Redis, PostgreSQL, MySQL) are production-ready via `@nds-stack/bunql/driver`. Each uses custom TCP + wire protocol, zero npm dependencies.
 
 ### General
 - **Not an ORM** — No schema management, query building, or migrations. You write SQL/MQL.
@@ -1274,33 +1273,25 @@ Write operations via the `/run` endpoint are synchronous (direct to `bun:sqlite`
 
 ## Stability
 
-- **v0.8.0-dev (in development)** — Unified TransactionManager across all backends + parameterized queries
-- **v0.7.0 (development)** — MySQL driver (custom TCP + wire protocol, mysql_native_password auth, prepared statements)
-- **v0.6.0 (development)** — PostgreSQL driver (custom TCP + wire protocol, MD5 auth, extended query protocol)
-- **v0.5.0 (development)** — Query builder (tagged template `sql\`...\`` + MQL chain + conditions helpers)
-- **v0.4.2 (development)** — Redis driver (custom TCP + RESP, AUTH + SELECT, MULTI/EXEC transactions)
-- **v0.4.1 (development)** — MongoDB driver (custom TCP + BSON, SCRAM-SHA-256 auth, sessions + transactions)
-- **v0.4.0 (development)** — Universal AST + SQL parser + MQL parser + bidirectional translators
+- **v1.0.0-dev (current)** — All 5 backends + query builder + relations API + unified transactions
+- **v0.8.0 (stable)** — TransactionManager across all backends, PG extended query + MySQL prepared statements
+- **v0.7.0 (stable)** — MySQL driver (custom TCP + wire protocol, mysql_native_password, prepared statements)
+- **v0.6.0 (stable)** — PostgreSQL driver (custom TCP + wire protocol, MD5 auth, extended query protocol)
+- **v0.5.0 (stable)** — Query builder (tagged template + MQL chain + conditions helpers)
+- **v0.4.2 (stable)** — Redis driver (custom TCP + RESP, AUTH + SELECT, MULTI/EXEC)
+- **v0.4.1 (stable)** — MongoDB driver (custom TCP + BSON, SCRAM-SHA-256, sessions)
+- **v0.4.0 (stable)** — Universal AST + SQL parser + MQL parser + bidirectional translators
 - **v0.3.0 (stable)** — Statement format control, transaction modes, pragma helper, serialize, verbose mode
-- **300 tests** — unit, integration, concurrency, stress, FTS5, parser, translators, BSON, RESP, PG wire, MySQL wire, transactions
+- **308 tests** — unit, integration, concurrency, stress, FTS5, parser, translators, BSON, RESP, PG wire, MySQL wire, transactions
 - **5000 sequential writes** — verified stable
 - **Graceful shutdown** — drain queue → finalize statements → close DB
 - **Memory safe** — LRU cache eviction, `yocto-queue` linked-list, no unbounded growth
 - **Retry strategy** — exponential backoff with ±50% jitter (baseDelay 50ms)
-- **Zero-dependency drivers** — MongoDB, Redis, PG, MySQL — semua custom wire protocol via `Bun.connect()`
+- **Zero-dependency drivers** — MongoDB, Redis, PG, MySQL — all custom wire protocol via `Bun.connect()`
 - **Hand-written parsers** — SQL parser (recursive descent), MQL parser (object traversal), all wire protocols
 - **Observability** — built-in metrics counters, cache stats, WAL monitoring, slow query detection, verbose tracing
 - **Audit score** — 100/100 (zero BLOCKING issues)
-- **Bundle** — 80.9KB core, 5.1KB server, 114KB driver (MongoDB + Redis + PG + MySQL)
-- **5000 sequential writes** — verified stable
-- **Graceful shutdown** — drain queue → finalize statements → close DB
-- **Memory safe** — LRU cache eviction, `yocto-queue` linked-list, no unbounded growth
-- **Retry strategy** — exponential backoff with ±50% jitter (baseDelay 50ms)
-- **Zero-dependency drivers** — MongoDB (TCP + BSON), Redis (TCP + RESP), PG (custom wire protocol)
-- **Hand-written parsers** — SQL parser (recursive descent), MQL parser (object traversal), PG wire protocol
-- **Observability** — built-in metrics counters, cache stats, WAL monitoring, slow query detection, verbose tracing
-- **Audit score** — 100/100 (zero BLOCKING issues)
-- **Bundle** — 80.9KB core (+SQL parser + query builder), 5.1KB server, 101KB driver (MongoDB + Redis + PG + MySQL)
+- **Bundle** — 83.1KB core, 5.1KB server, 114.7KB driver (MongoDB + Redis + PG + MySQL)
 
 ---
 
