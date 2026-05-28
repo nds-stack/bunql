@@ -4,8 +4,8 @@
  */
 
 import {
-  parseHandshake, encodeHandshakeResponse, encodeQueryPacket, assemblePackets, parseResponse, concatBytes,
-  type HandshakePacket, type ResponsePacket, type ResultSetPacket,
+  parseHandshake, encodeHandshakeResponse, encodeQueryPacket, encodeStmtPrepare, encodeStmtExecute, encodeStmtClose, assemblePackets, parseResponse, parsePrepareOK, concatBytes,
+  type HandshakePacket, type ResponsePacket, type ResultSetPacket, type PrepareOKPacket,
 } from "./wire";
 
 export interface MySQLConnectionConfig {
@@ -101,6 +101,34 @@ export class MySQLConnection {
     if (packets.length === 0) throw new MySQLError("Empty response");
 
     return parseResponse(packets);
+  }
+
+  async prepare(sql: string): Promise<PrepareOKPacket> {
+    if (!this.#socket || this.#closed) throw new Error("Connection closed");
+    this.#seq = 0;
+    const packet = encodeStmtPrepare(this.#seq++, sql);
+    this.#socket.write(packet);
+    const raw = await this.#readBuffer();
+    const packets = assemblePackets(raw);
+    if (packets.length === 0) throw new MySQLError("Empty prepare response");
+    return parsePrepareOK(packets[0]!, packets);
+  }
+
+  async executePrepared(stmtId: number, params: (Uint8Array | null)[]): Promise<ResponsePacket> {
+    if (!this.#socket || this.#closed) throw new Error("Connection closed");
+    this.#seq = 0;
+    const packet = encodeStmtExecute(this.#seq++, stmtId, params);
+    this.#socket.write(packet);
+    const raw = await this.#readBuffer();
+    const packets = assemblePackets(raw);
+    if (packets.length === 0) throw new MySQLError("Empty execute response");
+    return parseResponse(packets);
+  }
+
+  async closeStmt(stmtId: number): Promise<void> {
+    if (!this.#socket) return;
+    const packet = encodeStmtClose(0, stmtId);
+    this.#socket.write(packet);
   }
 
   async close(): Promise<void> {

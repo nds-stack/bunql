@@ -3,7 +3,9 @@
  * @description TCP connection + pool for PostgreSQL — custom implementation via Bun.connect().
  */
 
-import { PGReader, encodeStartup, encodePassword, encodeMD5Password, encodeQuery, encodeTerminate, md5Hex, type PGMessage } from "./wire";
+import { PGReader, encodeStartup, encodePassword, encodeMD5Password, encodeQuery, encodeParse, encodeBind, encodeDescribe, encodeExecute, encodeSync, encodeTerminate, md5Hex, type PGMessage } from "./wire";
+
+const textEncoder = new TextEncoder();
 
 export interface PGConnectionConfig {
   hostname: string;
@@ -135,6 +137,85 @@ export class PGConnection {
         const msg = reader.readMessage()!;
 
         switch (msg.type) {
+          case "RowDescription":
+            columns.push(...msg.columns);
+            break;
+
+          case "DataRow":
+            rows.push(msg.values);
+            break;
+
+          case "CommandComplete":
+            commandTag = msg.tag;
+            break;
+
+          case "ReadyForQuery":
+            if (error) throw error;
+            return { columns: columns.map((c) => c.name), rows: rowsToObjects(columns, rows), commandTag };
+
+          case "ErrorResponse":
+            error = new PGError(msg.message, msg.code);
+            break;
+
+          case "NoticeResponse":
+            break;
+
+          default:
+            break;
+        }
+      }
+
+      if (reader.available > 0) {
+        this.#buffer = new Uint8Array(reader.buffer.subarray(reader.offset));
+      }
+    }
+    throw new PGError("Query timeout");
+  }
+
+  async queryParams(sql: string, params: unknown[]): Promise<PGQueryResult> {
+    if (!this.#socket || this.#closed) throw new Error("Connection closed");
+
+    const stmtName = "";
+    const portalName = "";
+
+    // Convert params to text format
+    const paramBytes: (Uint8Array | null)[] = params.map((p) => {
+      if (p === null || p === undefined) return null;
+      return textEncoder.encode(String(p));
+    });
+
+    // Pipeline: Parse + Describe + Bind + Execute + Sync
+    const parseMsg = encodeParse(stmtName, sql);
+    const descMsg = encodeDescribe("S", stmtName);
+    const bindMsg = encodeBind(portalName, stmtName, paramBytes);
+    const execMsg = encodeExecute(portalName, 0);
+    const syncMsg = encodeSync();
+
+    this.#socket.write(parseMsg);
+    this.#socket.write(descMsg);
+    this.#socket.write(bindMsg);
+    this.#socket.write(execMsg);
+    this.#socket.write(syncMsg);
+
+    const columns: PGColumn[] = [];
+    const rows: (Uint8Array | null)[][] = [];
+    let commandTag = "";
+    let error: PGError | null = null;
+
+    for (let attempts = 0; attempts < 10000; attempts++) {
+      const raw = await this.#readBuffer();
+      const reader = new PGReader(raw);
+
+      while (reader.hasMessage()) {
+        const msg = reader.readMessage()!;
+
+        switch (msg.type) {
+          case "ParseComplete":
+          case "BindComplete":
+          case "ParameterDescription":
+          case "NoData":
+            break;
+
           case "RowDescription":
             columns.push(...msg.columns);
             break;

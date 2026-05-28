@@ -5,7 +5,9 @@
 
 import type { DriverAdapter, QueryResult, RunResult } from "./adapter.ts";
 import { MySQLConnectionPool, type MySQLConnectionConfig, MySQLError } from "./mysql/connection.ts";
-import { type ResultSetPacket } from "./mysql/wire.ts";
+import { type ResultSetPacket, type ResponsePacket } from "./mysql/wire.ts";
+
+const textEncoder = new TextEncoder();
 
 export interface MySQLDriverOptions {
   hostname?: string;
@@ -49,9 +51,18 @@ export class MySQLDriver implements DriverAdapter {
   async query(sql: string, params?: unknown[]): Promise<QueryResult> {
     const conn = await this.#pool.acquire();
     try {
-      let sqlStr = sql;
-      if (params && params.length > 0) sqlStr = interpolateParams(sql, params);
-      const result = await conn.query(sqlStr);
+      let result: ResponsePacket;
+      if (params && params.length > 0) {
+        const stmtInfo = await conn.prepare(sql);
+        const paramBytes: (Uint8Array | null)[] = params.map((p) => {
+          if (p === null || p === undefined) return null;
+          return textEncoder.encode(String(p));
+        });
+        result = await conn.executePrepared(stmtInfo.statementId, paramBytes);
+        conn.closeStmt(stmtInfo.statementId);
+      } else {
+        result = await conn.query(sql);
+      }
       if (result.type === "error") throw new MySQLError(result.message, result.code);
       if (result.type === "ok") return { columns: [], rows: [], duration: 0 };
       const rs = result as ResultSetPacket;
@@ -71,9 +82,18 @@ export class MySQLDriver implements DriverAdapter {
   async run(sql: string, params?: unknown[]): Promise<RunResult> {
     const conn = await this.#pool.acquire();
     try {
-      let sqlStr = sql;
-      if (params && params.length > 0) sqlStr = interpolateParams(sql, params);
-      const result = await conn.query(sqlStr);
+      let result: ResponsePacket;
+      if (params && params.length > 0) {
+        const stmtInfo = await conn.prepare(sql);
+        const paramBytes: (Uint8Array | null)[] = params.map((p) => {
+          if (p === null || p === undefined) return null;
+          return textEncoder.encode(String(p));
+        });
+        result = await conn.executePrepared(stmtInfo.statementId, paramBytes);
+        conn.closeStmt(stmtInfo.statementId);
+      } else {
+        result = await conn.query(sql);
+      }
       if (result.type === "error") throw new MySQLError(result.message, result.code);
       if (result.type === "resultset") return { changes: result.rows.length, lastInsertRowid: 0 };
       return { changes: result.affectedRows, lastInsertRowid: result.lastInsertId };
@@ -83,18 +103,6 @@ export class MySQLDriver implements DriverAdapter {
   }
 
   async close(): Promise<void> { await this.#pool.closeAll(); }
-}
-
-function interpolateParams(sql: string, params: unknown[]): string {
-  let idx = 0;
-  return sql.replace(/\?/g, () => {
-    const param = params[idx++];
-    if (param === null || param === undefined) return "NULL";
-    if (typeof param === "number") return String(param);
-    if (typeof param === "boolean") return param ? "TRUE" : "FALSE";
-    if (typeof param === "string") return `'${param.replace(/'/g, "''")}'`;
-    return String(param);
-  });
 }
 
 export type { };

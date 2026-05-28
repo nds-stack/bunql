@@ -27,6 +27,10 @@ export type PGMessage =
   | { type: "ErrorResponse"; severity: string; code: string; message: string }
   | { type: "NoticeResponse"; message: string }
   | { type: "EmptyQueryResponse" }
+  | { type: "ParseComplete" }
+  | { type: "BindComplete" }
+  | { type: "ParameterDescription"; paramTypes: number[] }
+  | { type: "NoData" }
   | { type: "Unknown"; raw: Uint8Array };
 
 export interface PGColumn {
@@ -42,6 +46,12 @@ export interface PGColumn {
 function be32(value: number): Uint8Array {
   const buf = new Uint8Array(4);
   new DataView(buf.buffer).setInt32(0, value, false);
+  return buf;
+}
+
+function be16(value: number): Uint8Array {
+  const buf = new Uint8Array(2);
+  new DataView(buf.buffer).setInt16(0, value, false);
   return buf;
 }
 
@@ -101,6 +111,48 @@ export function encodeQuery(sql: string): Uint8Array {
   const payload = textEncoder.encode(sql + "\0");
   const len = be32(4 + payload.length);
   return encodeMessage("Q", concat([len, payload]));
+}
+
+// ─── Extended Query Protocol ──────────────────────────
+
+export function encodeParse(name: string, sql: string, paramTypes?: number[]): Uint8Array {
+  const nameBytes = textEncoder.encode(name + "\0");
+  const sqlBytes = textEncoder.encode(sql + "\0");
+  const numParams = be32(0);
+  const paramTypeBytes = paramTypes ? concat(paramTypes.map(be32)) : new Uint8Array(0);
+  const body = concat([nameBytes, sqlBytes, be16(paramTypes?.length ?? 0), paramTypeBytes]);
+  const len = be32(4 + body.length);
+  return encodeMessage("P", concat([len, body]));
+}
+
+export function encodeBind(portal: string, stmt: string, params: (Uint8Array | null)[]): Uint8Array {
+  const portalBytes = textEncoder.encode(portal + "\0");
+  const stmtBytes = textEncoder.encode(stmt + "\0");
+  // All text format (param format code 0)
+  const paramFmts = be16(0);
+  const numParams = be16(params.length);
+  const paramData = concat(params.map((p) => p ? concat([be32(p.length), p]) : be32(-1)));
+  // All text result format
+  const resultFmts = be16(1);
+  const body = concat([portalBytes, stmtBytes, paramFmts, numParams, paramData, resultFmts]);
+  const len = be32(4 + body.length);
+  return encodeMessage("B", concat([len, body]));
+}
+
+export function encodeDescribe(type: "P" | "S", name: string): Uint8Array {
+  const body = concat([new Uint8Array([type === "P" ? 80 : 83]), textEncoder.encode(name + "\0")]);
+  const len = be32(4 + body.length);
+  return encodeMessage("D", concat([len, body]));
+}
+
+export function encodeExecute(portal: string, maxRows: number): Uint8Array {
+  const body = concat([textEncoder.encode(portal + "\0"), be32(maxRows)]);
+  const len = be32(4 + body.length);
+  return encodeMessage("E", concat([len, body]));
+}
+
+export function encodeSync(): Uint8Array {
+  return encodeMessage("S", be32(4));
 }
 
 export function encodeTerminate(): Uint8Array {
@@ -167,6 +219,10 @@ export class PGReader {
       case "E": return this.#parseError(body);
       case "N": return this.#parseNotice(body);
       case "I": return { type: "EmptyQueryResponse" };
+      case "1": return { type: "ParseComplete" };
+      case "2": return { type: "BindComplete" };
+      case "t": return this.#parseParamDesc(body);
+      case "n": return { type: "NoData" };
       default: return { type: "Unknown", raw: body };
     }
   }
@@ -267,6 +323,16 @@ export class PGReader {
       if (fields[i] === "M") message = fields[i + 1] ?? "";
     }
     return { type: "NoticeResponse", message };
+  }
+
+  #parseParamDesc(body: Uint8Array): PGMessage {
+    const v = new DataView(body.buffer, body.byteOffset, body.byteLength);
+    const count = v.getInt16(0, false);
+    const types: number[] = [];
+    for (let i = 0; i < count; i++) {
+      types.push(v.getInt32(2 + i * 4, false));
+    }
+    return { type: "ParameterDescription", paramTypes: types };
   }
 }
 

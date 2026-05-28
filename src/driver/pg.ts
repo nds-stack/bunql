@@ -52,16 +52,13 @@ export class PGDriver implements DriverAdapter {
   async query(sql: string, params?: unknown[]): Promise<QueryResult> {
     const conn = await this.#pool.acquire();
     try {
-      let sqlStr = sql;
+      let result;
       if (params && params.length > 0) {
-        sqlStr = interpolateParams(sql, params);
+        result = await conn.queryParams(sql, params);
+      } else {
+        result = await conn.query(sql);
       }
-      const result = await conn.query(sqlStr);
-      return {
-        columns: result.columns,
-        rows: result.rows,
-        duration: 0,
-      };
+      return { columns: result.columns, rows: result.rows, duration: 0 };
     } finally {
       this.#pool.release(conn);
     }
@@ -70,11 +67,12 @@ export class PGDriver implements DriverAdapter {
   async run(sql: string, params?: unknown[]): Promise<RunResult> {
     const conn = await this.#pool.acquire();
     try {
-      let sqlStr = sql;
+      let result;
       if (params && params.length > 0) {
-        sqlStr = interpolateParams(sql, params);
+        result = await conn.queryParams(sql, params);
+      } else {
+        result = await conn.query(sql);
       }
-      const result = await conn.query(sqlStr);
       const match = result.commandTag.match(/^(\w+)\s+(\d+)/);
       const changes = match ? parseInt(match[2]!, 10) : 0;
       return { changes, lastInsertRowid: 0 };
@@ -86,18 +84,6 @@ export class PGDriver implements DriverAdapter {
   async close(): Promise<void> {
     await this.#pool.closeAll();
   }
-}
-
-function interpolateParams(sql: string, params: unknown[]): string {
-  let idx = 0;
-  return sql.replace(/\?/g, () => {
-    const param = params[idx++];
-    if (param === null || param === undefined) return "NULL";
-    if (typeof param === "number") return String(param);
-    if (typeof param === "boolean") return param ? "TRUE" : "FALSE";
-    if (typeof param === "string") return `'${param.replace(/'/g, "''")}'`;
-    return String(param);
-  });
 }
 
 export type { };

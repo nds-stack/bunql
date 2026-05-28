@@ -202,6 +202,80 @@ export function encodeQueryPacket(seq: number, sql: string): Uint8Array {
   return encodePacket(seq, payload);
 }
 
+// ─── Prepared Statements ──────────────────────────────
+
+export function encodeStmtPrepare(seq: number, sql: string): Uint8Array {
+  const payload = new Uint8Array(1 + sql.length);
+  payload[0] = 0x16; // COM_STMT_PREPARE
+  textEncoder.encodeInto(sql, payload.subarray(1));
+  return encodePacket(seq, payload);
+}
+
+export function encodeStmtExecute(seq: number, stmtId: number, params: (Uint8Array | null)[]): Uint8Array {
+  // Header: 1 (cmd) + 4 (stmtId) + 1 (cursor) + 4 (iter) = 10 bytes
+  // Null bitmap: ceil(numParams/8) bytes
+  const nullBitmapLen = Math.ceil(params.length / 8);
+  const headerLen = 1 + 4 + 1 + 4 + nullBitmapLen + 1;
+  const paramData: Uint8Array[] = [];
+
+  for (let i = 0; i < params.length; i++) {
+    const p = params[i]!;
+    // For each param: type(2) + sign(1) + length(4) + value
+    paramData.push(uint16LE(0x0f)); // MYSQL_TYPE_VAR_STRING
+    paramData.push(uint8(0));       // unsigned
+    if (p === null) {
+      // null bitmap handles this
+    } else {
+      paramData.push(uint32LE(p.length));
+      paramData.push(p);
+    }
+  }
+
+  const totalLen = headerLen + paramData.reduce((s, c) => s + c.length, 0);
+  const payload = new Uint8Array(totalLen);
+  let off = 0;
+  payload[off++] = 0x17; // COM_STMT_EXECUTE
+  new DataView(payload.buffer).setUint32(off, stmtId, true); off += 4;
+  payload[off++] = 0;    // cursor (0 = no cursor)
+  new DataView(payload.buffer).setUint32(off, 1, true); off += 4; // iteration count
+
+  // Null bitmap
+  for (let i = 0; i < nullBitmapLen; i++) {
+    let byte = 0;
+    for (let b = 0; b < 8; b++) {
+      const idx = i * 8 + b;
+      if (idx < params.length && params[idx] === null) {
+        byte |= (1 << b);
+      }
+    }
+    payload[off++] = byte;
+  }
+
+  payload[off++] = 1; // send type info (1 = send params types)
+
+  for (const chunk of paramData) {
+    payload.set(chunk, off);
+    off += chunk.length;
+  }
+
+  return encodePacket(seq, payload);
+}
+
+export function encodeStmtClose(seq: number, stmtId: number): Uint8Array {
+  const payload = new Uint8Array(5);
+  payload[0] = 0x19; // COM_STMT_CLOSE
+  new DataView(payload.buffer).setUint32(1, stmtId, true);
+  return encodePacket(seq, payload);
+}
+
+export interface PrepareOKPacket {
+  type: "prepare_ok";
+  statementId: number;
+  columnCount: number;
+  paramCount: number;
+  warningCount: number;
+}
+
 // ─── Response parsing ─────────────────────────────────
 
 export interface OKPacket {
@@ -286,6 +360,31 @@ export function parseResponse(packets: Uint8Array[]): ResponsePacket {
   }
 
   throw new Error(`Unknown response: header=0x${header.toString(16)}`);
+}
+
+export function parsePrepareOK(first: Uint8Array, packets: Uint8Array[]): PrepareOKPacket {
+  if (first[0] === 0xff) {
+    const err = parseError(first);
+    throw new WireError(err.message, err.code);
+  }
+  let off = 0;
+  const stmtId = new DataView(first.buffer, first.byteOffset, first.byteLength).getUint32(off, true); off += 4;
+  const columnCount = readLenEncInt(first, off).value; off += 1;
+  const paramCount = readLenEncInt(first, off).value; off += 1;
+  off += 1; // filler
+  const warningCount = new DataView(first.buffer, first.byteOffset + off, first.byteLength - off).getUint16(0, true);
+
+  // Parse param definitions + column definitions from subsequent packets
+  return { type: "prepare_ok", statementId: stmtId, columnCount, paramCount, warningCount };
+}
+
+export class WireError extends Error {
+  readonly code?: number;
+  constructor(message: string, code?: number) {
+    super(message);
+    this.name = "WireError";
+    this.code = code;
+  }
 }
 
 function parseOK(data: Uint8Array): OKPacket {
@@ -416,6 +515,12 @@ function uint8(value: number): Uint8Array {
 function uint32LE(value: number): Uint8Array {
   const buf = new Uint8Array(4);
   new DataView(buf.buffer).setUint32(0, value, true);
+  return buf;
+}
+
+function uint16LE(value: number): Uint8Array {
+  const buf = new Uint8Array(2);
+  new DataView(buf.buffer).setUint16(0, value, true);
   return buf;
 }
 
