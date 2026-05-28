@@ -90,6 +90,21 @@ export class BunQL {
   #verbose: ((sql: string) => void) | null = null;
 
   constructor(path: string, options?: BunQLOptions) {
+    if (path.startsWith("mongodb://") || path.startsWith("mongodb+srv://")) {
+      throw new Error(
+        "MongoDB driver is available as MongoDriver: " +
+        `import { MongoDriver } from "@nds-stack/bunql/driver"; ` +
+        `const db = new MongoDriver("${path}");`,
+      );
+    }
+
+    if (path.startsWith("redis://") || path.startsWith("rediss://")) {
+      throw new Error(
+        "Redis driver is available via MongoDriver pattern (details in upcoming release). " +
+        "For now use BunQL with SQLite.",
+      );
+    }
+
     const config = this.#resolveConfig(options);
     this.#config = config;
     this.#logger = config.logger;
