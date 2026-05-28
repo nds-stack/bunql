@@ -6,7 +6,6 @@ import type { Database, Statement as BunStatement } from "bun:sqlite";
 
 interface CacheEntry {
   stmt: BunStatement;
-  lastUsed: number;
 }
 
 export class StatementCache {
@@ -48,7 +47,7 @@ export class StatementCache {
     }
 
     const stmt = this.#db.prepare(sql);
-    this.#cache.set(sql, { stmt, lastUsed: performance.now() });
+    this.#cache.set(sql, { stmt });
     return stmt;
   }
 

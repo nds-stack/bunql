@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-05-28
+
+### Fixed
+- Transaction: added `#processing` guard — prevents nested transaction race when concurrent calls overlap
+- Transaction: `began` flag prevents `ROLLBACK` error when `BEGIN IMMEDIATE` fails
+- StatementCache: removed dead `lastUsed` field (Map insertion-order LRU is O(1) already)
+- Close: `clearPending()` rejects queued operations on shutdown, preventing stale promise leaks
+- Backup: improved `#validateBackupPath()` — empty path, length limit (512), backslash reject, character whitelist
+
+### Changed
+- WriteQueue: `Promise.withResolvers()` replaces `new Promise()` closure — reduces allocations per enqueue
+
 ## [0.1.2] - 2026-05-28
 
 ### Documentation

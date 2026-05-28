@@ -406,6 +406,7 @@ export class BunQL {
     }
 
     this.#writeQueue.close();
+    this.#writeQueue.clearPending("Database is closing");
 
     try {
       await this.#writeQueue.drain();
@@ -431,6 +432,12 @@ export class BunQL {
   }
 
   #validateBackupPath(path: string): void {
+    if (!path || path.length === 0) {
+      throw new Error("Backup path must not be empty.");
+    }
+    if (path.length > 512) {
+      throw new Error(`Backup path too long (${path.length} chars, max 512).`);
+    }
     if (path.includes("..")) {
       throw new Error(
         `Invalid backup path: ${path}. Path traversal (..) is not allowed.`,
@@ -439,6 +446,16 @@ export class BunQL {
     if (path.includes("\0")) {
       throw new Error(
         `Invalid backup path: ${path}. Null byte not allowed.`,
+      );
+    }
+    if (path.includes("\\")) {
+      throw new Error(
+        `Invalid backup path: ${path}. Backslash not allowed — use forward slash.`,
+      );
+    }
+    if (!/^[\w./_-]+$/.test(path) && !/^[a-zA-Z]:/.test(path)) {
+      throw new Error(
+        `Invalid backup path: ${path}. Only alphanumeric, /, ., _, - allowed.`,
       );
     }
   }

@@ -24,6 +24,7 @@ export class TransactionManager {
   #writeQueue: WriteQueue;
   #savepointCounter = 0;
   #depth = 0;
+  #processing = false;
   #hooks?: BunQLHooks;
   #logger?: Logger;
   #committed = 0;
@@ -48,19 +49,22 @@ export class TransactionManager {
   async transaction<T>(
     callback: (tx: TransactionContext) => Promise<T>,
   ): Promise<T> {
-    if (this.#depth > 0) {
+    if (this.#processing && this.#depth > 0) {
       return this.#nestedTransaction(callback);
     }
 
     return this.#writeQueue.enqueue(async () => {
+      this.#processing = true;
       this.#depth++;
       const startTime = performance.now();
       const stmtCache = new Map<string, BunStatement>();
+      let began = false;
       try {
         this.#hooks?.beforeTransaction?.();
         this.#log("debug", "Beginning transaction");
 
         this.#db.run("BEGIN IMMEDIATE");
+        began = true;
 
         const ctx = this.#createContext(stmtCache);
 
@@ -69,7 +73,7 @@ export class TransactionManager {
           result = await callback(ctx);
         } catch (error) {
           const originalError = error instanceof Error ? error : new Error(String(error));
-          this.#db.run("ROLLBACK");
+          if (began) this.#db.run("ROLLBACK");
           this.#rolledBack++;
           const duration = performance.now() - startTime;
           this.#hooks?.afterTransaction?.(duration, false);
@@ -88,6 +92,7 @@ export class TransactionManager {
           stmt.finalize();
         }
         this.#depth--;
+        this.#processing = false;
       }
     });
   }
