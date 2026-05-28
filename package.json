@@ -25,7 +25,7 @@
     "typecheck:build": "tsc -p tsconfig.build.json",
     "bench": "bun run bench/runner.ts",
     "prepublishOnly": "bun run lint && bun run typecheck && bun test && bun run build",
-    "build": "bun build ./src/index.ts --outdir=./dist --target=bun --format=esm --external bun:sqlite && bun build ./src/server/index.ts --outdir=./dist/server --target=bun --format=esm --external bun:sqlite && tsc -p tsconfig.build.json",
+    "build": "bun run clean && bun build ./src/index.ts --outdir=./dist --target=bun --format=esm --external bun:sqlite && bun build ./src/server/index.ts --outdir=./dist/server --target=bun --format=esm --external bun:sqlite && tsc -p tsconfig.build.json",
     "clean": "rm -rf dist"
   },
   "files": [
