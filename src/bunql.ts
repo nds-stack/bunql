@@ -11,6 +11,13 @@ import { ReaderPool } from "./reader-pool.ts";
 import { FTS5Helper } from "./fts5.ts";
 import { ConnectionError } from "./errors/connection-error.ts";
 import { QueueError } from "./errors/queue-error.ts";
+import { SqlQuery, sql as sqlTag } from "./query/sql-builder.ts";
+import { MqlQuery } from "./query/mql-builder.ts";
+import type { QueryExecutor } from "./query/sql-builder.ts";
+import type { Executor as MqlExecutor } from "./query/mql-builder.ts";
+import { parseMQL } from "./parser/mql-parser.ts";
+import { astToMongo } from "./translator/to-mongodb.ts";
+import type { MongoCommand } from "./translator/to-mongodb.ts";
 import type {
   BunQLOptions,
   BunQLConfig,
@@ -873,6 +880,53 @@ export class BunQL {
 
   #verboseLog(sql: string): void {
     this.#verbose?.(sql);
+  }
+
+  sql(strings: TemplateStringsArray, ...values: unknown[]): SqlQuery {
+    const q = sqlTag(strings, ...values);
+    return new SqlQuery(q.sql, q.params, {
+      executeSQL: (sql, params) => {
+        const result = this.query(sql, params as SQLQueryBindings[]);
+        return { columns: result.columns, rows: result.rows as Record<string, unknown>[], duration: result.durationMs };
+      },
+      executeRun: (sql, params) => {
+        const result = this.run(sql, params as SQLQueryBindings[]);
+        return { changes: result.changes, lastInsertRowid: result.lastInsertRowid ?? 0 };
+      },
+      isAsync: false,
+    });
+  }
+
+  mql(collection: string): MqlQuery {
+    return new MqlQuery(collection, {
+      executeMQL: (col, method, args) => {
+        const cmd = this.#parseMQL(col, method, args);
+        return this.#executeMongoCommand(cmd);
+      },
+      executeMQLRun: (col, method, args) => {
+        const cmd = this.#parseMQL(col, method, args);
+        return this.#executeMongoRun(cmd);
+      },
+    });
+  }
+
+  #parseMQL(collection: string, method: string, args: unknown[]): MongoCommand {
+    const node = parseMQL(collection, method, args);
+    return astToMongo(node);
+  }
+
+  #executeMongoCommand(cmd: MongoCommand): import("./query/mql-builder.ts").QueryResult {
+    throw new Error(
+      "MongoDB queries require MongoDriver from @nds-stack/bunql/driver. " +
+      "BunQL class currently supports SQLite only.",
+    );
+  }
+
+  #executeMongoRun(cmd: MongoCommand): import("./query/mql-builder.ts").RunResult {
+    throw new Error(
+      "MongoDB writes require MongoDriver from @nds-stack/bunql/driver. " +
+      "BunQL class currently supports SQLite only.",
+    );
   }
 }
 

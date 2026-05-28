@@ -1,7 +1,7 @@
 {
   "name": "@nds-stack/bunql",
-  "version": "0.2.0",
-  "description": "Lightweight SQLite wrapper for Bun — queued writes, serialized transactions, SQLITE_BUSY handling",
+  "version": "0.5.0-dev",
+  "description": "Bun Query Language — tulis SQL/MQL, jalan di SQLite, MongoDB, Redis. Zero-dep drivers.",
   "author": "nds-stack <nds.stack@gmail.com>",
   "type": "module",
   "main": "dist/index.js",
@@ -18,6 +18,10 @@
     "./driver": {
       "import": "./dist/driver/index.js",
       "types": "./dist/driver/index.d.ts"
+    },
+    "./query": {
+      "import": "./dist/query/index.js",
+      "types": "./dist/query/index.d.ts"
     }
   },
   "scripts": {
@@ -29,7 +33,7 @@
     "typecheck:build": "tsc -p tsconfig.build.json",
     "bench": "bun run bench/runner.ts",
     "prepublishOnly": "bun run lint && bun run typecheck && bun test && bun run build",
-    "build": "bun run clean && bun build ./src/index.ts --outdir=./dist --target=bun --format=esm --external bun:sqlite && bun build ./src/server/index.ts --outdir=./dist/server --target=bun --format=esm --external bun:sqlite && bun build ./src/driver/index.ts --outdir=./dist/driver --target=bun --format=esm --external bun:sqlite && tsc -p tsconfig.build.json",
+    "build": "bun run clean && bun build ./src/index.ts --outdir=./dist --target=bun --format=esm --external bun:sqlite && bun build ./src/server/index.ts --outdir=./dist/server --target=bun --format=esm --external bun:sqlite && bun build ./src/driver/index.ts --outdir=./dist/driver --target=bun --format=esm --external bun:sqlite && bun build ./src/query/index.ts --outdir=./dist/query --target=bun --format=esm --external bun:sqlite && tsc -p tsconfig.build.json",
     "clean": "rm -rf dist"
   },
   "files": [
