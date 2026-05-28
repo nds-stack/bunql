@@ -6,6 +6,10 @@
 export type { DriverAdapter, QueryResult, RunResult } from "./adapter.ts";
 export { MongoDriver } from "./mongodb.ts";
 export type { MongoDriverOptions } from "./mongodb.ts";
-export { MongoError, ConnectionPool } from "./mongodb/connection.ts";
+export { RedisDriver } from "./redis.ts";
+export type { RedisDriverOptions } from "./redis.ts";
+export { MongoError, ConnectionPool as MongoConnectionPool } from "./mongodb/connection.ts";
+export { RedisError, RedisConnectionPool } from "./redis/connection.ts";
 export { encodeBSON } from "./mongodb/bson-encoder.ts";
 export { decodeBSON } from "./mongodb/bson-decoder.ts";
+export { encodeCommand, decodeSimple, type RESPValue } from "./redis/resp.ts";
