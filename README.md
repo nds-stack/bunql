@@ -55,10 +55,10 @@
 | Backend | Status | Auto-detect | Driver |
 |---------|--------|-------------|--------|
 | **SQLite** | ✅ Production (v0.3.0) | `./app.db`, `:memory:` | `bun:sqlite` native |
-| **MongoDB** | ✅ Production (via driver subpath) | `mongodb://localhost:27017/db` | Custom TCP + BSON (zero deps) |
-| **Redis** | ✅ Production (via driver subpath) | `redis://localhost:6379` | Custom TCP + RESP (zero deps) |
-| **PostgreSQL** | ✅ Production (via driver subpath) | `postgres://localhost:5432/db` | Custom TCP + wire protocol (zero deps) |
-| **MySQL** | ✅ Production (via driver subpath) | `mysql://localhost:3306/db` | Custom TCP + wire protocol (zero deps) |
+| **MongoDB** | ✅ Production (via driver subpath) | `mongodb://localhost:27017/db` | Custom TCP + BSON (zero deps) — Bun has no built-in MongoDB driver |
+| **Redis** | ✅ Production (via driver subpath) | `redis://localhost:6379` | Custom TCP + RESP (zero deps) — Bun has no built-in Redis driver |
+| **PostgreSQL** | ✅ Production (via driver subpath) | `postgres://localhost:5432/db` | Custom TCP + wire protocol (zero deps). Bun also has built-in PG via `new SQL()` |
+| **MySQL** | ✅ Production (via driver subpath) | `mysql://localhost:3306/db` | Custom TCP + wire protocol (zero deps). Bun also has built-in MySQL via `new SQL()` |
 
 ```typescript
 import { BunQL } from "@nds-stack/bunql";
@@ -84,7 +84,9 @@ Bunql translates queries through a **Universal AST** — write SQL, run on Mongo
 
 ### Zero-dependency drivers
 
-Bunql builds its own MongoDB and Redis drivers from scratch — TCP via `Bun.connect()`, custom BSON/RESP codec. No `npm mongodb`, no `ioredis`. No dependency tree. Bundle stays lean.
+MongoDB and Redis drivers are built from scratch — TCP via `Bun.connect()`, custom BSON/RESP codec. No `npm mongodb`, no `ioredis`. Bun has no built-in MongoDB or Redis driver.
+
+PostgreSQL and MySQL drivers are also custom implementations via `Bun.connect()`, offering an alternative to Bun's built-in `new SQL()` module with the same unified API across all backends and support for the Universal AST translation pipeline.
 
 ### Dual API: Raw SQL + Query Builder
 
@@ -99,16 +101,16 @@ const users = db.query("SELECT * FROM users WHERE active = ?", [true]);
 db.select().from(users).where(eq(users.active, true)).all();
 ```
 
-### Beyond better-sqlite3 parity
+### Beyond bun:sqlite parity
 
-| Raw `bun:sqlite` | bunql |
+| Raw `bun:sqlite` | `@nds-stack/bunql` |
 |---|---|
 | Manual BEGIN/COMMIT/ROLLBACK | `db.transaction(cb)` — 3 lock modes, SAVEPOINT nesting |
 | Manual statement lifecycle | LRU cache (100), auto-finalize on close |
 | Objects only (`.all()`) | `.raw()` (arrays), `.pluck()` (scalar), `.as()` (class map), `.iterate()` |
 | No observability | `db.metrics`, `db.cacheStats`, slow query, verbose tracing |
 | No reader pool | `readerPool: N` — round-robin parallel reads |
-| SQLite only | **SQLite, MongoDB, Redis, PostgreSQL, MySQL** — one query language |
+| bun:sqlite only | bun:sqlite + MongoDB + Redis + PostgreSQL + MySQL |
 | Manual PRAGMA loops | `db.pragma("key", { simple: true })` |
 | Raw errors | Typed `BunQLError` hierarchy with `.cause` |
 | No auto-maintenance | Scheduled WAL checkpoint, vacuum, backup |
@@ -138,7 +140,7 @@ db.select().from(users).where(eq(users.active, true)).all();
 1. **Parse** — SQL text → tokens → AST (hand-written recursive descent, zero deps)
 2. **Cache** — AST hash → cached SQL string (skip generation on repeated identical queries)
 3. **Translate** — AST → dialect-specific SQL or native commands
-4. **Execute** — Via driver: `bun:sqlite` (native), TCP + BSON (MongoDB), TCP + RESP (Redis)
+4. **Execute** — Via driver: `bun:sqlite` (native), TCP + BSON (custom MongoDB), TCP + RESP (custom Redis), custom PG/MySQL wire protocol
 
 ### Bidirectional example
 
@@ -997,7 +999,7 @@ db.run(sql, params)
 |----------|-----------|
 | Universal AST | Single IR for all query languages — enables bidirectional SQL↔NoSQL translation |
 | Hand-written parsers | SQL/MQL parsers built from scratch — zero dependencies, < 900 LOC total |
-| Custom drivers | MongoDB/Redis drivers built with `Bun.connect()` — zero npm deps, minimal bundle |
+| Custom drivers | MongoDB/Redis built with `Bun.connect()` — zero npm deps. PG/MySQL custom alternative to Bun's native `new SQL()`. |
 | SQLite: single DB connection | SQLite is single-writer. Multiple connections don't help writes. |
 | `run()` is sync | `bun:sqlite` is sync — wrapping with Promise adds overhead for no benefit. |
 | WriteQueue only for tx/batch | Transactions need serialization (BEGIN→COMMIT). Writes don't. |
