@@ -1142,7 +1142,60 @@ Benchmark of `@nds-stack/bunql` custom TCP drivers (PG, MySQL, MongoDB) against 
 
 > SQLite SELECT overhead comes from BunQL's cache lookup + query parsing + row-to-object mapping. SQLite INSERT overhead is negligible because `run()` passes through directly to `bun:sqlite`. PG overhead comes from extended query protocol (Parse+Bind+Describe+Execute+Sync pipeline). MySQL uses simple COM_QUERY with inline params, keeping overhead under 2%. MongoDB has no baseline since Bun has no built-in MongoDB driver.
 
-## Error Handling
+---
+
+## Feature Support Matrix
+
+**Legend:** ✅ Fully supported | ⚠️ Partial / experimental | ❌ Not supported | — Not applicable
+
+| Feature | SQLite | PostgreSQL | MySQL | MongoDB | Redis |
+|---------|--------|-----------|-------|---------|-------|
+| **CRUD** | | | | | |
+| SELECT / find | ✅ | ✅ | ✅ | ✅ | ⚠️ |
+| INSERT | ✅ | ✅ | ✅ | ✅ | ✅ |
+| UPDATE | ✅ | ✅ | ✅ | ✅ | ⚠️ |
+| DELETE | ✅ | ✅ | ✅ | ✅ | ⚠️ |
+| **WHERE conditions** | | | | | |
+| `=`, `<>`, `>`, `<`, `>=`, `<=` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `LIKE` / `NOT LIKE` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `IN` / `NOT IN` | ✅ | ✅ | ✅ | ✅ | ⚠️ |
+| `BETWEEN` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `IS NULL` / `IS NOT NULL` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `AND` / `OR` / `NOT` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| **Advanced SQL** | | | | | |
+| `JOIN` (INNER/LEFT/RIGHT) | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `GROUP BY` + aggregate functions | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `HAVING` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `DISTINCT` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `ORDER BY` / `LIMIT` / `OFFSET` | ✅ | ✅ | ✅ | ✅ | ⚠️ |
+| Subqueries `FROM (SELECT ...)` | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Arithmetic `+`, `-`, `*`, `/`, `%` | ✅ | ✅ | ✅ | ⚠️ | ❌ |
+| `RETURNING` clause | ✅ | ✅ | ❌ | ❌ | ❌ |
+| **Aggregate pipeline stages** | | | | | |
+| `$match` → `WHERE` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `$group` with accumulators | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `$sort` / `$limit` / `$skip` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `$project` → column list | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `$lookup` → `LEFT JOIN` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `$unwind` | ❌ | ❌ | ❌ | ✅ | ❌ |
+| **MQL operators** | | | | | |
+| `$eq`, `$ne`, `$gt`, `$lt`, `$gte`, `$lte` | ✅ | — | — | ✅ | ❌ |
+| `$in`, `$nin` | ✅ | — | — | ✅ | ❌ |
+| `$regex` | ✅ | — | — | ✅ | ❌ |
+| `$exists` | ✅ | — | — | ✅ | ❌ |
+| `$and`, `$or`, `$not`, `$nor` | ✅ | — | — | ✅ | ❌ |
+| `$all`, `$size`, `$mod`, `$type` | ⚠️ | — | — | ✅ | ❌ |
+| **Transactions** | | | | | |
+| BEGIN / COMMIT / ROLLBACK | ✅ | ✅ | ✅ | ✅ | ✅ |
+| SAVEPOINT nesting | ✅ | ✅ | ✅ | ✅ | ❌ |
+| **Connection** | | | | | |
+| Connection pooling | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Parameterized queries | ✅ | ✅ | ⚠️ | ❌ | ❌ |
+| **Native dialect** | | | | | |
+| Placeholder style | `?` | `$1` | `?` | — | — |
+| Identifier quoting | — | `"col"` | `` `col` `` | — | — |
+
+---
 
 Errors in bunql follow a typed hierarchy. The original error is always preserved via `cause` — no swallowed errors:
 
