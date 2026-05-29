@@ -23,6 +23,58 @@ export function astToMongo(node: ASTNode): MongoCommand {
 }
 
 function translateSelect(n: import("../ast/ast.ts").SelectNode): MongoCommand {
+  const collection = typeof n.from === "string" ? n.from : n.from.name;
+
+  // If JOINs or GROUP BY present, use aggregate pipeline
+  if (n.joins && n.joins.length > 0 || n.groupBy) {
+    const pipeline: Record<string, unknown>[] = [];
+
+    // Build $lookup stages from JOINs
+    if (n.joins) {
+      for (const j of n.joins) {
+        if (j.on.type === "eq") {
+          const leftName = colName(j.on.left);
+          const rightVal = typeof j.on.right === "string" ? j.on.right.split(".").pop() ?? j.on.right : String(j.on.right);
+          pipeline.push({
+            $lookup: {
+              from: j.table.name,
+              localField: leftName,
+              foreignField: rightVal,
+              as: j.table.name,
+            },
+          });
+        }
+      }
+    }
+
+    // $match from WHERE
+    if (n.where) {
+      pipeline.push({ $match: condToMQL(n.where) });
+    }
+
+    // $group from GROUP BY
+    if (n.groupBy) {
+      const groupStage: Record<string, unknown> = { _id: {} };
+      for (const g of n.groupBy) {
+        const name = colName(g);
+        (groupStage._id as Record<string, unknown>)[name] = `$${name}`;
+      }
+      pipeline.push({ $group: groupStage });
+    }
+
+    // $sort from ORDER BY
+    if (n.orderBy) {
+      pipeline.push({ $sort: orderByToMQL(n.orderBy) });
+    }
+
+    // $limit / $skip
+    if (n.limit !== undefined) pipeline.push({ $limit: n.limit });
+    if (n.offset !== undefined) pipeline.push({ $skip: n.offset });
+
+    return { collection, method: "aggregate", args: [pipeline] };
+  }
+
+  // No JOIN/GROUP BY — use simple find
   const filter = n.where ? condToMQL(n.where) : {};
   const projection: Record<string, number> = {};
   let hasCols = false;
@@ -47,7 +99,7 @@ function translateSelect(n: import("../ast/ast.ts").SelectNode): MongoCommand {
   if (n.offset !== undefined) options.skip = n.offset;
 
   return {
-    collection: typeof n.from === "string" ? n.from : n.from.name,
+    collection,
     method: "find",
     args: [filter, Object.keys(options).length > 0 ? options : undefined].filter(Boolean),
   };
