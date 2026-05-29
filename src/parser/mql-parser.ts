@@ -236,6 +236,7 @@ function mqlOperator(col: ColumnExpr, ops: Record<string, unknown>): Condition {
   }
 
   const conditions: (Condition | null)[] = entries.map(([op, val]) => {
+    if (!op.startsWith("$")) return null;
     switch (op) {
       case "$eq": return { type: "eq" as const, left: col, right: val as Literal };
       case "$ne": return { type: "neq" as const, left: col, right: val as Literal };
@@ -268,8 +269,7 @@ function mqlOperator(col: ColumnExpr, ops: Record<string, unknown>): Condition {
       }
       case "$all": {
         const allVals = val as Literal[];
-        if (allVals.length === 1) return { type: "eq" as const, left: col, right: allVals[0]! };
-        return { type: "and" as const, conditions: allVals.map(v => ({ type: "eq" as const, left: col, right: v })) };
+        return { type: "all" as const, left: col, values: allVals };
       }
       case "$expr": {
         const expr = val as Record<string, unknown[]>;
@@ -293,10 +293,11 @@ function mqlOperator(col: ColumnExpr, ops: Record<string, unknown>): Condition {
       case "$type": {
         return { type: "typeCheck" as const, left: col, bsonType: String(val) };
       }
-      default: return { type: "eq" as const, left: col, right: val as Literal };
+      default: throw new Error(`Unsupported MQL operator: ${op}`);
     }
   });
 
-  const result = conditions.length === 1 ? conditions[0]! : { type: "and" as const, conditions: conditions.filter((c): c is Condition => c !== null) };
+  const filtered = conditions.filter((c): c is Condition => c !== null);
+  const result = filtered.length === 1 ? filtered[0]! : filtered.length > 0 ? { type: "and" as const, conditions: filtered } : { type: "and" as const, conditions: [] };
   return result;
 }

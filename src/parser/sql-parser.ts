@@ -72,9 +72,22 @@ class Parser {
       case "update": return this.#parseUpdate();
       case "delete": return this.#parseDelete();
       case "create": return this.#parseCreateTable();
+      case "drop": return this.#parseDropTable();
+      case "begin":
+      case "commit":
+      case "rollback":
+        this.#advance();
+        return { type: "raw", sql: kw.toUpperCase(), params: [] };
       default:
         throw new ParseError(`Unexpected keyword: ${kw}`, this.#current.pos);
     }
+  }
+
+  #parseDropTable(): ASTNode {
+    this.#expect("drop");
+    this.#expect("table");
+    const table = this.#parseIdentifier();
+    return { type: "raw", sql: `DROP TABLE ${table}`, params: [] };
   }
 
   #makeSetOp(op: import("../ast/ast.ts").SetOpNode["op"], left: import("../ast/ast.ts").SelectNode): import("../ast/ast.ts").SetOpNode {
@@ -149,7 +162,11 @@ class Parser {
     } while (this.#current.type === "comma");
 
     const where = this.#match("where") ? this.#parseWhere() : undefined;
-    return { type: "update", table, set, where };
+    let returning: string[] | undefined;
+    if (this.#match("returning")) {
+      returning = this.#parseColumnList();
+    }
+    return { type: "update", table, set, where, returning };
   }
 
   #parseDelete(): ASTNode {

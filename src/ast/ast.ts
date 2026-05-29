@@ -150,6 +150,7 @@ export type Condition =
   | LikeCondition | NotLikeCondition
   | ModCondition
   | ElemMatchCondition | ExprCondition
+  | AllCondition
   | SizeCondition | TypeCheckCondition
   | InCondition | NotInCondition
   | BetweenCondition
@@ -169,6 +170,7 @@ export interface NotLikeCondition { type: "notLike"; left: ColumnExpr; pattern: 
 export interface ModCondition { type: "mod"; left: ColumnExpr; divisor: ValueExpr; remainder: ValueExpr; }
 export interface ElemMatchCondition { type: "elemMatch"; left: ColumnExpr; condition: Condition; }
 export interface ExprCondition { type: "expr"; left: ColumnExpr; op: string; right: ColumnExpr; }
+export interface AllCondition { type: "all"; left: ColumnExpr; values: ValueExpr[]; }
 export interface SizeCondition { type: "size"; left: ColumnExpr; count: ValueExpr; }
 export interface TypeCheckCondition { type: "typeCheck"; left: ColumnExpr; bsonType: string; }
 export interface InCondition   { type: "in";   left: ColumnExpr; values: ValueExpr[]; }

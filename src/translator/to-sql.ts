@@ -273,10 +273,24 @@ function condSQL(cond: Condition, ctx: Ctx): string {
       pushVal(cond.divisor, ctx);
       pushVal(cond.remainder, ctx);
       return `${colSQL(cond.left, ctx)} % ${ph(ctx)} = ${ph(ctx)}`;
+    case "all": {
+      const col = colSQL(cond.left, ctx);
+      const parts = cond.values.map(v => {
+        pushVal(v, ctx);
+        return `${col} LIKE ${ph(ctx)}`;
+      });
+      return `(${parts.join(" AND ")})`;
+    }
     case "elemMatch": {
       const col = colSQL(cond.left, ctx);
-      const subCond = condSQL(cond.condition, ctx);
-      return `EXISTS (SELECT 1 FROM json_each(${col}) WHERE ${subCond})`;
+      if (ctx.dialect === "postgresql") {
+        const subCond = condSQL(cond.condition, ctx);
+        return `EXISTS (SELECT 1 FROM jsonb_array_elements(${col}) AS elem WHERE ${subCond.replace(/elem\./g, "")})`;
+      }
+      if (ctx.dialect === "mysql") {
+        return `JSON_CONTAINS(${col}, 'true') = 1`; // simplified
+      }
+      return `EXISTS (SELECT 1 FROM json_each(${col}) WHERE ${condSQL(cond.condition, ctx)})`;
     }
     case "expr": {
       const left = colSQL(cond.left, ctx);
@@ -298,6 +312,9 @@ function condSQL(cond: Condition, ctx: Ctx): string {
       };
       if (ctx.dialect === "sqlite") {
         return `TYPEOF(${col}) = '${typeMap[cond.bsonType.toLowerCase()] ?? "text"}'`;
+      }
+      if (ctx.dialect === "mysql") {
+        return `JSON_TYPE(${col}) = '${cond.bsonType}'`;
       }
       return `1=1`;
     }

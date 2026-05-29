@@ -13,10 +13,12 @@ export function astToMongo(node: ASTNode, params: unknown[] = []): MongoCommand 
     case "update": return translateUpdate(node, params);
     case "delete": return translateDelete(node, params);
     case "aggregate": return translateAggregate(node, params);
-    case "createTable": return { collection: node.table, method: "find", args: [{}] };
+    case "createTable":
+      throw new Error(`MongoDB does not support CREATE TABLE. Collections are created automatically on first insert.`);
     case "setOp":
       throw new Error(`MongoDB does not support ${(node as import("../ast/ast.ts").SetOpNode).op.toUpperCase()} set operations. Use application-level merging instead.`);
-    case "raw": return { collection: "", method: "find", args: [node.sql] };
+    case "raw":
+      throw new Error(`Raw SQL not supported for MongoDB. Use SQL SELECT/INSERT/UPDATE/DELETE instead.`);
     default: throw new Error(`Unsupported AST node for MongoDB: ${(node as ASTNode).type}`);
   }
 }
@@ -33,6 +35,10 @@ function resolveValue(val: ValueExpr, params: unknown[]): unknown {
     return params[val.index];
   }
   return val;
+}
+
+function likeToRegex(pattern: string): string {
+  return pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*').replace(/_/g, '.');
 }
 
 function translateSelect(n: SelectNode, params: unknown[]): MongoCommand {
@@ -276,12 +282,14 @@ function condToMQL(cond: Condition, params: unknown[]): Record<string, unknown> 
     case "gte": return { [colName(cond.left)]: { $gte: resolveValue(cond.right, params) } };
     case "lte": return { [colName(cond.left)]: { $lte: resolveValue(cond.right, params) } };
     case "like": {
-      const base: Record<string, unknown> = { $regex: String(resolveValue(cond.pattern, params)) };
+      const pattern = likeToRegex(String(resolveValue(cond.pattern, params)));
+      const base: Record<string, unknown> = { $regex: pattern };
       if (cond.flags) base.$options = cond.flags;
       return { [colName(cond.left)]: base };
     }
     case "notLike": {
-      const inner: Record<string, unknown> = { $regex: String(resolveValue(cond.pattern, params)) };
+      const pattern = likeToRegex(String(resolveValue(cond.pattern, params)));
+      const inner: Record<string, unknown> = { $regex: pattern };
       if (cond.flags) inner.$options = cond.flags;
       return { [colName(cond.left)]: { $not: inner } };
     }
@@ -303,6 +311,8 @@ function condToMQL(cond: Condition, params: unknown[]): Record<string, unknown> 
     }
     case "elemMatch":
       return { [colName(cond.left)]: { $elemMatch: condToMQL(cond.condition, params) } };
+    case "all":
+      return { [colName(cond.left)]: { $all: cond.values.map(v => resolveValue(v, params)) } };
     case "expr": {
       const opMap: Record<string, string> = { gt: "$gt", lt: "$lt", gte: "$gte", lte: "$lte", eq: "$eq", neq: "$ne" };
       const mqlOp = opMap[cond.op] ?? "$eq";
