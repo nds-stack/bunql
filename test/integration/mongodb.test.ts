@@ -6,7 +6,7 @@ let available = false;
 
 try {
   driver = new MongoDriver("mongodb://localhost:27017/test_bunql_int");
-  await driver.run("DELETE FROM int_users").catch(() => {});
+  await driver.run("DELETE FROM int_users");
   available = true;
 } catch {
   // MongoDB not available — all tests will skip via guard
