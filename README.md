@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source srcset=".docs/images/banner.webp" type="image/webp">
+    <img src=".docs/images/banner.webp" alt="BunQL" width="800">
+  </picture>
+</p>
+
 # @nds-stack/bunql
 
 > **Bun Query Language** — Write SQL or MQL, run on SQLite, MongoDB, Redis, PostgreSQL, MySQL. One query, all backends.

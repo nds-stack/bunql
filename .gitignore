@@ -11,6 +11,8 @@ coverage
 *.lcov
 
 .docs/*
+!.docs/images/
+!.docs/images/**
 
 # logs
 logs

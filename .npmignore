@@ -8,5 +8,6 @@ examples/
 tsconfig.json
 *.test.ts
 *.bench.ts
-.doc/*
+.docs/*
+!.docs/images/**
 context7.json
