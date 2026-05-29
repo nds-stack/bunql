@@ -55,8 +55,8 @@ function translateSelect(n: import("../ast/ast.ts").SelectNode, ctx: Ctx): SQLRe
   if (n.groupBy) sql += " GROUP BY " + n.groupBy.map((c) => colSQL(c, ctx)).join(", ");
   if (n.having) sql += " HAVING " + condSQL(n.having, ctx);
   if (n.orderBy) sql += " ORDER BY " + n.orderBy.map(o => `${colSQL(o.column, ctx)} ${o.direction.toUpperCase()}`).join(", ");
-  if (n.limit !== undefined) sql += ` LIMIT ${n.limit}`;
-  if (n.offset !== undefined) sql += ` OFFSET ${n.offset}`;
+  if (n.limit !== undefined) { ctx.params.push(n.limit); sql += ` LIMIT ${ph(ctx)}`; }
+  if (n.offset !== undefined) { ctx.params.push(n.offset); sql += ` OFFSET ${ph(ctx)}`; }
   return { sql, params: ctx.params };
 }
 
@@ -167,7 +167,15 @@ function translateAggregate(n: import("../ast/ast.ts").AggregateNode, ctx: Ctx):
               : `json_group_array(DISTINCT ${a.field}) AS ${k}`;
           }
           if (a.func === "first" || a.func === "last") {
-            return `${a.field} AS ${k}`;
+            const orderPart = orderByClauses.length > 0
+              ? ` ORDER BY ${orderByClauses.join(", ")}`
+              : "";
+            const partition = Object.keys(stage.id).length > 0
+              ? Object.entries(stage.id).map(([, v]) => v ?? "").filter(Boolean).join(", ")
+              : "";
+            const over = partition ? `OVER (PARTITION BY ${partition}${orderPart})` : `OVER (${orderPart})`;
+            const fn = a.func === "first" ? "FIRST_VALUE" : "LAST_VALUE";
+            return `${fn}(${a.field}) ${over} AS ${k}`;
           }
           return `${a.func.toUpperCase()}(${a.field}) AS ${k}`;
         });
@@ -180,6 +188,12 @@ function translateAggregate(n: import("../ast/ast.ts").AggregateNode, ctx: Ctx):
       case "sort": orderByClauses = stage.fields.map(f => `${colSQL(f.column, ctx)} ${f.direction.toUpperCase()}`); break;
       case "limit": limitVal = stage.count; break;
       case "skip": offsetVal = stage.count; break;
+      case "sample": {
+        // SQL: ORDER BY RANDOM() LIMIT N (best-effort)
+        orderByClauses = ["RANDOM()"];
+        limitVal = stage.size;
+        break;
+      }
       case "project": {
         if (!hasGroup) {
           selectColumns = Object.entries(stage.fields).filter(([, v]) => v !== 0 && v !== false).map(([k, v]) => {
@@ -217,8 +231,8 @@ function translateAggregate(n: import("../ast/ast.ts").AggregateNode, ctx: Ctx):
   if (whereClauses.length > 0) sql += " WHERE " + whereClauses.join(" AND ");
   if (groupByColumns.length > 0) sql += " GROUP BY " + groupByColumns.join(", ");
   if (orderByClauses.length > 0) sql += " ORDER BY " + orderByClauses.join(", ");
-  if (limitVal !== undefined) sql += ` LIMIT ${limitVal}`;
-  if (offsetVal !== undefined) sql += ` OFFSET ${offsetVal}`;
+  if (limitVal !== undefined) { ctx.params.push(limitVal); sql += ` LIMIT ${ph(ctx)}`; }
+  if (offsetVal !== undefined) { ctx.params.push(offsetVal); sql += ` OFFSET ${ph(ctx)}`; }
   return { sql, params: ctx.params };
 }
 
@@ -231,7 +245,7 @@ function colSQL(col: ColumnExpr, ctx: Ctx): string {
       return col.alias ? `${inner} AS ${col.alias}` : inner;
     }
     case "literal": return ph(ctx);
-    case "function": return `${col.func?.toUpperCase()}(${(col.args ?? []).map(a => colSQL(a, ctx)).join(", ")})`;
+    case "function": return `${col.func?.toUpperCase()}(${col.distinct ? "DISTINCT " : ""}${(col.args ?? []).map(a => colSQL(a, ctx)).join(", ")})`;
     case "binary": return `(${colSQL(col.left!, ctx)} ${col.op} ${colSQL(col.right!, ctx)})`;
     default: return q(col.name ?? "?", ctx);
   }

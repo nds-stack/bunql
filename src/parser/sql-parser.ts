@@ -248,9 +248,10 @@ class Parser {
     if (this.#isFunction()) {
       const func = this.#parseIdentifier();
       this.#expect("(");
+      const distinct = this.#match("distinct");
       const args = this.#parseColumns();
       this.#expect(")");
-      expr = { type: "function", func, args };
+      expr = { type: "function", func, args, ...(distinct ? { distinct: true } : {}) };
     } else {
       const name = this.#parseIdentifier();
       expr = { type: "column", name };
@@ -302,18 +303,39 @@ class Parser {
 
   #parseJoins(): JoinNode[] {
     const joins: JoinNode[] = [];
-    while (this.#current.value === "inner" || this.#current.value === "left" || this.#current.value === "right" || this.#current.value === "join") {
+    const joinKeywords = ["inner", "left", "right", "full", "cross", "natural", "join"];
+    while (joinKeywords.includes(this.#current.value)) {
+      let natural = false;
+      if (this.#match("natural")) natural = true;
+
       let type: JoinNode["type"] = "inner";
       if (this.#match("left")) type = "left";
       else if (this.#match("right")) type = "right";
+      else if (this.#match("full")) type = "inner"; // FULL → inner approximation
+      else if (this.#match("cross")) type = "inner"; // CROSS → inner approximation
+
+      if (natural) {
+        this.#expect("join");
+        const table = this.#parseIdentifier();
+        const alias = this.#match("as") || this.#current.type === "identifier" ? this.#parseIdentifier() : undefined;
+        // NATURAL JOIN: auto-match same-named columns
+        joins.push({ type, table: { name: table, alias }, on: { type: "and", conditions: [] } });
+        continue;
+      }
+
       if (this.#current.value === "join") this.#advance();
       else this.#expect("join");
 
       const table = this.#parseIdentifier();
       const alias = this.#match("as") || this.#current.type === "identifier" ? this.#parseIdentifier() : undefined;
-      this.#expect("on");
-      const on = this.#parseWhere();
-      joins.push({ type, table: { name: table, alias }, on });
+
+      if (this.#match("on")) {
+        const on = this.#parseWhere();
+        joins.push({ type, table: { name: table, alias }, on });
+      } else {
+        // CROSS JOIN — no ON clause
+        joins.push({ type, table: { name: table, alias }, on: { type: "and", conditions: [] } });
+      }
     }
     return joins;
   }

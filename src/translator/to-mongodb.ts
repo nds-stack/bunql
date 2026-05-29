@@ -237,6 +237,7 @@ function translateAggregate(n: import("../ast/ast.ts").AggregateNode, params: un
       case "limit": pipeline.push({ $limit: stage.count }); break;
       case "skip": pipeline.push({ $skip: stage.count }); break;
       case "project": pipeline.push({ $project: stage.fields as Record<string, unknown> }); break;
+      case "sample": pipeline.push({ $sample: { size: stage.size } }); break;
       case "lookup": {
         if ("pipeline" in stage && stage.pipeline) {
           const lookupObj: Record<string, unknown> = {

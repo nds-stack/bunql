@@ -97,6 +97,7 @@ export type AggregateStage =
   | { stage: "limit"; count: number }
   | { stage: "skip"; count: number }
   | { stage: "project"; fields: Record<string, number | string | boolean | ComputedExpr> }
+  | { stage: "sample"; size: number }
   | { stage: "lookup"; from: string; localField: string; foreignField: string; as: string }
   | { stage: "lookup"; from: string; let?: Record<string, string>; pipeline: AggregateStage[]; as: string }
   | { stage: "unwind"; path: string; preserveNullAndEmptyArrays?: boolean; includeArrayIndex?: string };
@@ -119,6 +120,7 @@ export interface ColumnExpr {
   value?: Literal;
   func?: string;
   args?: ColumnExpr[];
+  distinct?: boolean;
   left?: ColumnExpr;
   right?: ColumnExpr;
   op?: string;

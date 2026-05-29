@@ -70,8 +70,9 @@ describe("AST → SQLite", () => {
       orderBy: [orderBy(col("name"), "desc")], limit: 10, offset: 5,
     });
     expect(result.sql).toContain("ORDER BY name DESC");
-    expect(result.sql).toContain("LIMIT 10");
-    expect(result.sql).toContain("OFFSET 5");
+    expect(result.sql).toContain("LIMIT ?");
+    expect(result.sql).toContain("OFFSET ?");
+    expect(result.params).toEqual([10, 5]);
   });
 });
 
@@ -82,7 +83,7 @@ describe("SQL → AST → SQL (round-trip)", () => {
     const result = astToSQL(ast);
     expect(result.sql.toLowerCase()).toContain("select");
     expect(result.sql).toContain("users");
-    expect(result.params).toEqual([25]);
+    expect(result.params).toEqual([25, 10]);
   });
 });
 

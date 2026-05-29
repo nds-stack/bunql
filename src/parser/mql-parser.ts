@@ -99,6 +99,7 @@ function parseAggregate(collection: string, pipeline: Record<string, unknown>[])
         }
         return { stage: "unwind", path: "" };
       }
+      case "$sample": return { stage: "sample", size: (value as Record<string, number>).size ?? 1 };
       default: return { stage: "limit", count: 0 };
     }
   });
@@ -219,8 +220,9 @@ function mqlToCondition(obj: Record<string, unknown>): Condition {
     return { type: "eq", left: col, right: value as Literal };
   });
 
-  if (conditions.length === 1) return conditions[0]!;
-  return { type: "and", conditions };
+  if (conditions.length === 1 && conditions[0] !== null) return conditions[0]!;
+  const filtered = conditions.filter((c): c is Condition => c !== null);
+  return filtered.length > 0 ? { type: "and", conditions: filtered } : { type: "and", conditions: [] };
 }
 
 function mqlOperator(col: ColumnExpr, ops: Record<string, unknown>): Condition {
