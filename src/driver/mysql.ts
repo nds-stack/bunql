@@ -75,8 +75,18 @@ export class MySQLDriver implements DriverAdapter {
   async query(sql: string, params?: unknown[]): Promise<QueryResult> {
     const conn = await this.#pool.acquire();
     try {
-      const finalSQL = params && params.length > 0 ? this.buildQuery(sql, params) : sql;
-      const result = await conn.query(finalSQL);
+      let result: ResponsePacket;
+      if (params && params.length > 0) {
+        const stmtInfo = await conn.prepare(sql);
+        const paramBytes: (Uint8Array | null)[] = params.map((p) => {
+          if (p === null || p === undefined) return null;
+          return textEncoder.encode(String(p));
+        });
+        result = await conn.executePrepared(stmtInfo.statementId, paramBytes, stmtInfo.paramTypes);
+        conn.closeStmt(stmtInfo.statementId);
+      } else {
+        result = await conn.query(sql);
+      }
       if (result.type === "error") throw new MySQLError(result.message, result.code);
       if (result.type === "ok") return { columns: [], rows: [], duration: 0 };
       const rs = result as ResultSetPacket;
@@ -96,8 +106,18 @@ export class MySQLDriver implements DriverAdapter {
   async run(sql: string, params?: unknown[]): Promise<RunResult> {
     const conn = await this.#pool.acquire();
     try {
-      const finalSQL = params && params.length > 0 ? this.buildQuery(sql, params) : sql;
-      const result = await conn.query(finalSQL);
+      let result: ResponsePacket;
+      if (params && params.length > 0) {
+        const stmtInfo = await conn.prepare(sql);
+        const paramBytes: (Uint8Array | null)[] = params.map((p) => {
+          if (p === null || p === undefined) return null;
+          return textEncoder.encode(String(p));
+        });
+        result = await conn.executePrepared(stmtInfo.statementId, paramBytes, stmtInfo.paramTypes);
+        conn.closeStmt(stmtInfo.statementId);
+      } else {
+        result = await conn.query(sql);
+      }
       if (result.type === "error") throw new MySQLError(result.message, result.code);
       if (result.type === "resultset") return { changes: result.rows.length, lastInsertRowid: 0 };
       return { changes: result.affectedRows, lastInsertRowid: result.lastInsertId };

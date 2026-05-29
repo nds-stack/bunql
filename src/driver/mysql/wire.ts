@@ -49,9 +49,10 @@ export function readLenEncInt(data: Uint8Array, offset: number): { value: number
     const v = data[offset + 1]! | (data[offset + 2]! << 8) | (data[offset + 3]! << 16);
     return { value: v, bytes: 4 };
   }
-  // 0xfe for 8-byte int, but we'll handle as 4-byte for simplicity
-  const v = data[offset + 1]! | (data[offset + 2]! << 8) | (data[offset + 3]! << 16) | (data[offset + 4]! << 24);
-  return { value: v >>> 0, bytes: 9 };
+  // 0xfe: 8-byte integer (rare, used for large values)
+  const low = data[offset + 1]! | (data[offset + 2]! << 8) | (data[offset + 3]! << 16) | (data[offset + 4]! << 24);
+  const high = data[offset + 5]! | (data[offset + 6]! << 8) | (data[offset + 7]! << 16) | (data[offset + 8]! << 24);
+  return { value: low >>> 0, bytes: 9 };
 }
 
 export function readLenEncString(data: Uint8Array, offset: number): { value: string; bytes: number } {
@@ -212,18 +213,19 @@ export function encodeStmtPrepare(seq: number, sql: string): Uint8Array {
 }
 
 export function encodeStmtExecute(seq: number, stmtId: number, params: (Uint8Array | null)[], paramTypes?: number[]): Uint8Array {
-  const nullBitmapLen = Math.ceil(params.length / 8);
-  // Compute total size: header + (type(2) + unsigned(1) + lenenc(N) + value(M)) for each param
-  let totalLen = 1 + 4 + 1 + 4 + nullBitmapLen + 1;
-  const valueSegments: Uint8Array[] = [];
-  for (let i = 0; i < params.length; i++) {
-    totalLen += 2; // type(1) + unsigned(1)
-    const p = params[i];
-    if (p !== null && p !== undefined) {
-      const lenEnc = encodeLenEnc(p.length);
-      valueSegments.push(lenEnc);
-      valueSegments.push(p);
-      totalLen += lenEnc.length + p.length;
+  const numParams = params.length;
+  let totalLen = 1 + 4 + 1 + 4; // cmd + stmtId + cursor + iter
+
+  if (numParams > 0) {
+    const nullBitmapLen = Math.ceil(numParams / 8);
+    totalLen += nullBitmapLen + 1; // bitmap + new_params_bound_flag
+    totalLen += numParams * 2; // type block: 1 byte type + 1 byte unsigned each
+    for (let i = 0; i < numParams; i++) {
+      const p = params[i];
+      if (p !== null && p !== undefined) {
+        const lenEnc = encodeLenEnc(p.length);
+        totalLen += lenEnc.length + p.length;
+      }
     }
   }
 
@@ -234,25 +236,33 @@ export function encodeStmtExecute(seq: number, stmtId: number, params: (Uint8Arr
   payload[off++] = 0;
   new DataView(payload.buffer).setUint32(off, 1, true); off += 4;
 
-  for (let i = 0; i < nullBitmapLen; i++) {
-    let byte = 0;
-    for (let b = 0; b < 8; b++) {
-      const idx = i * 8 + b;
-      if (idx < params.length && params[idx] === null) byte |= (1 << b);
+  if (numParams > 0) {
+    const nullBitmapLen = Math.ceil(numParams / 8);
+    for (let i = 0; i < nullBitmapLen; i++) {
+      let byte = 0;
+      for (let b = 0; b < 8; b++) {
+        const idx = i * 8 + b;
+        if (idx < numParams && params[idx] === null) byte |= (1 << b);
+      }
+      payload[off++] = byte;
     }
-    payload[off++] = byte;
-  }
 
-  payload[off++] = 1; // new_params_bound_flag = 1 (all types as VAR_STRING)
+    payload[off++] = 1; // new_params_bound_flag = 1
 
-  for (let i = 0; i < params.length; i++) {
-    const p = params[i];
-    payload[off++] = 0x0f; // MYSQL_TYPE_VAR_STRING (1 byte, not LE uint16!)
-    payload[off++] = 0;    // unsigned flag
-    if (p !== null && p !== undefined) {
-      const lenEnc = encodeLenEnc(p.length);
-      for (const b of lenEnc) payload[off++] = b;
-      for (const b of p) payload[off++] = b;
+    // ALL TYPES FIRST — use VAR_STRING (MySQL converts text to the actual column type)
+    for (let i = 0; i < numParams; i++) {
+      payload[off++] = 0x0f; // MYSQL_TYPE_VAR_STRING
+      payload[off++] = 0;    // unsigned flag
+    }
+
+    // ALL VALUES SECOND (contiguous block)
+    for (let i = 0; i < numParams; i++) {
+      const p = params[i];
+      if (p !== null && p !== undefined) {
+        const lenEnc = encodeLenEnc(p.length);
+        for (const b of lenEnc) payload[off++] = b;
+        for (const b of p) payload[off++] = b;
+      }
     }
   }
 
@@ -315,48 +325,22 @@ export interface ResultSetPacket {
 
 export type ResponsePacket = OKPacket | ERRPacket | ResultSetPacket;
 
-export function parseResponse(packets: Uint8Array[]): ResponsePacket {
+export function parseResponse(packets: Uint8Array[], isBinary = false): ResponsePacket {
   const first = packets[0]!;
   if (first.length === 0) throw new Error("Empty response");
 
   const header = first[0]!;
 
-  // ERR packet
-  if (header === 0xff) {
-    return parseError(first);
-  }
+  if (header === 0xff) return parseError(first);
+  if (header === 0x00) return parseOK(first);
+  if (header === 0xfe && first.length < 9) return parseOK(first);
 
-  // OK packet (header 0x00 or first byte > 0xfa for result set column count)
-  // Note: OK packet starts with 0x00 or 0xFE (when CLIENT_DEPRECATE_EOF)
-  if (header === 0x00) {
-    return parseOK(first);
-  }
-
-  // ResultSet: first byte is column count (length-encoded integer)
-  // For a result set, the column count is typically 1+ bytes
-  // OK packet with DEPRECATE_EOF can start with header 0xFE too
-  if (header === 0xfe && first.length < 9) {
-    // EOF packet (could be auth switch too, but we handle that separately)
-    // With CLIENT_DEPRECATE_EOF, last packet after rows is OK, not EOF
-    // Without CLIENT_DEPRECATE_EOF, we get EOF after column defs and after rows
-    return parseOK(first); // Treat as OK for simplicity
-  }
-
-  // If first byte is > 0 and < 0xfb, it could be a column count
-  // MySQL column count is a length-encoded integer which starts with certain byte patterns
-  // 0xfb is NULL in length-encoded int, not a valid column count
-
-  // ResultSet: first packet is column count
   const colCount = readLenEncInt(first, 0);
   if (colCount.value > 0 && colCount.value < 1000 && packets.length > 1) {
-    // Need to parse column definitions and rows
-    return parseResultSet(colCount.value, packets);
+    return parseResultSet(colCount.value, packets, isBinary);
   }
 
-  // If we got here and first byte is 0xfe, it's likely OK with DEPRECATE_EOF
-  if (header === 0xfe) {
-    return parseOK(first);
-  }
+  if (header === 0xfe) return parseOK(first);
 
   throw new Error(`Unknown response: header=0x${header.toString(16)}`);
 }
@@ -422,17 +406,10 @@ function parseError(data: Uint8Array): ERRPacket {
   return { type: "error", code, message, sqlState };
 }
 
-function parseResultSet(colCount: number, packets: Uint8Array[]): ResultSetPacket {
-  // Packet 0: column count (already parsed)
-  // Packets 1 to colCount: column definitions
-  // Last packet before rows: EOF (if !CLIENT_DEPRECATE_EOF)
-  // Then rows (each row is a packet)
-  // Final packet: OK or EOF
-
+function parseResultSet(colCount: number, packets: Uint8Array[], isBinary = false): ResultSetPacket {
   const columns: ColumnDefinition[] = [];
   let packetIdx = 1;
 
-  // Column definitions
   for (let i = 0; i < colCount && packetIdx < packets.length; i++) {
     const col = parseColumnDefinition(packets[packetIdx]!);
     columns.push(col);
@@ -442,26 +419,77 @@ function parseResultSet(colCount: number, packets: Uint8Array[]): ResultSetPacke
   // Skip EOF packet if present (between column defs and rows)
   if (packetIdx < packets.length) {
     const p = packets[packetIdx]!;
-    if (p[0] === 0xfe && p.length < 9) {
-      packetIdx++;
-    }
+    if (p[0] === 0xfe && p.length < 9) packetIdx++;
   }
 
-  // Rows
   const rows: (Uint8Array | null)[][] = [];
+  // For binary: no EOF separator between column defs and rows
+  // For text: EOF packet may exist between column defs and rows (skipped above)
+  // After column defs: remaining packets are [rows..., OK/EOF]
   while (packetIdx < packets.length) {
     const p = packets[packetIdx]!;
     packetIdx++;
-    // Last packet: EOF (0xfe with short length) or OK (0x00 or 0xfe with longer payload)
-    if (p[0] === 0xfe && p.length < 9) break;
-    if (p[0] === 0x00 && p.length < 9) break;
-    if (p[0] === 0xff) break; // error
-    // Data row
-    const row = parseTextRow(p, colCount);
-    rows.push(row);
+    if (p[0] === 0xff) break;
+
+    if (isBinary) {
+      // In binary protocol, the last packet is OK (0x00). If this is the last packet
+      // and starts with 0x00, it's the terminator, not a row.
+      if (p[0] === 0x00 && packetIdx >= packets.length) break;
+      // EOF terminator
+      if (p[0] === 0xfe && p.length < 9) break;
+      // Parse as binary row
+      const row = parseBinaryRow(p, columns);
+      if (row.length > 0) rows.push(row);
+    } else {
+      if (p[0] === 0xfe && p.length < 9) break;
+      if (p[0] === 0x00 && p.length < 9) break;
+      const row = parseTextRow(p, colCount);
+      if (row.length > 0) rows.push(row);
+    }
   }
 
   return { type: "resultset", columns, rows };
+}
+
+function parseBinaryRow(data: Uint8Array, columns: ColumnDefinition[]): (Uint8Array | null)[] {
+  let off = 1; // skip 0x00 header byte
+  const colCount = columns.length;
+  // Binary null bitmap has 2-bit offset (reserved bits)
+  const nullBitmapLen = Math.ceil((colCount + 2) / 8);
+  const nullBitmap = data.subarray(off, off + nullBitmapLen);
+  off += nullBitmapLen;
+
+  const row: (Uint8Array | null)[] = [];
+
+  for (let i = 0; i < colCount; i++) {
+    // Check null bitmap (offset by 2 bits per MySQL binary protocol)
+    const byteIdx = Math.floor((i + 2) / 8);
+    const bitIdx = (i + 2) % 8;
+    if (byteIdx < nullBitmapLen && (nullBitmap[byteIdx]! & (1 << bitIdx)) !== 0) {
+      row.push(null);
+      continue;
+    }
+
+    const type = columns[i]!.type;
+    // Fixed-length numeric types
+    if (type === 0x01) { row.push(data.subarray(off, off + 1)); off += 1; }           // TINYINT
+    else if (type === 0x02 || type === 0x0d) { row.push(data.subarray(off, off + 2)); off += 2; } // SMALLINT, YEAR
+    else if (type === 0x03 || type === 0x09) { row.push(data.subarray(off, off + 4)); off += 4; } // INT, INT24
+    else if (type === 0x04) { row.push(data.subarray(off, off + 4)); off += 4; }       // FLOAT
+    else if (type === 0x05 || type === 0x08) { row.push(data.subarray(off, off + 8)); off += 8; } // DOUBLE, BIGINT
+    else {
+      // String/BLOB/Decimal/Date/Time: length-encoded
+      const len = readLenEncInt(data, off);
+      off += len.bytes;
+      if (len.value === 0) {
+        row.push(new Uint8Array(0));
+      } else {
+        row.push(data.subarray(off, off + len.value));
+        off += len.value;
+      }
+    }
+  }
+  return row;
 }
 
 function parseColumnDefinition(data: Uint8Array): ColumnDefinition {

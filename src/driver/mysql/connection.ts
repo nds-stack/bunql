@@ -136,7 +136,7 @@ export class MySQLConnection {
     const raw = await this.#readBuffer();
     const packets = assemblePackets(raw);
     if (packets.length === 0) throw new MySQLError("Empty execute response");
-    return parseResponse(packets);
+    return parseResponse(packets, true); // COM_STMT_EXECUTE = binary protocol
   }
 
   async closeStmt(stmtId: number): Promise<void> {
