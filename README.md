@@ -1140,21 +1140,21 @@ Benchmark of `@nds-stack/bunql` custom TCP drivers (PG, MySQL, MongoDB, Redis) a
 | `$unwind` | ❌ | ❌ | ❌ | ✅ | ❌ |
 | `$sample` | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
 | **MQL operators** | | | | | |
-| `$eq`, `$ne`, `$gt`, `$lt`, `$gte`, `$lte` | ✅ | — | — | ✅ | ❌ |
-| `$in`, `$nin` | ✅ | — | — | ✅ | ❌ |
-| `$regex` + `$options` (wildcard conversion) | ✅ | — | — | ✅ | ❌ |
-| `$exists` | ✅ | — | — | ✅ | ❌ |
-| `$and`, `$or`, `$not`, `$nor` | ✅ | — | — | ✅ | ❌ |
-| `$all`, `$size`, `$mod`, `$type` | ✅ | — | — | ✅ | ❌ |
-| `$elemMatch`, `$expr` | ⚠️ | — | — | ✅ | ❌ |
+| `$eq`, `$ne`, `$gt`, `$lt`, `$gte`, `$lte` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `$in`, `$nin` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `$regex` + `$options` (wildcard conversion) | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `$exists` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `$and`, `$or`, `$not`, `$nor` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `$all`, `$size`, `$mod`, `$type` | ✅ | ⚠️ | ✅ | ✅ | ❌ |
+| `$elemMatch`, `$expr` | ⚠️ | ✅ | ⚠️ | ✅ | ❌ |
 | **MQL update operators** | | | | | |
-| `$set` | ✅ | — | — | ✅ | ❌ |
-| `$inc` / `$unset` | ✅ | — | — | ✅ | ❌ |
-| `$push` / `$pull` | ✅ | — | — | ✅ | ❌ |
+| `$set` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `$inc` / `$unset` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `$push` / `$pull` | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
 | **MQL accumulators** | | | | | |
-| `$sum`, `$avg`, `$min`, `$max`, `$count` | ✅ | — | — | ✅ | ❌ |
-| `$push`, `$addToSet` | ✅ | — | — | ✅ | ❌ |
-| `$first`, `$last` | ⚠️ | — | — | ✅ | ❌ |
+| `$sum`, `$avg`, `$min`, `$max`, `$count` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `$push`, `$addToSet` | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
+| `$first`, `$last` | ⚠️ | ✅ | ✅ | ✅ | ❌ |
 | **DDL** | | | | | |
 | `CREATE TABLE` | ✅ | ✅ | ✅ | ❌ | ❌ |
 | `DROP TABLE` | ✅ | ✅ | ✅ | ❌ | ❌ |
