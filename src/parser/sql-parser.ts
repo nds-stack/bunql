@@ -428,12 +428,18 @@ class Parser {
     }
 
     const op = this.#parseOperator();
-    const right = this.#parseLiteral();
-    const opMap: Record<string, Condition["type"]> = {
+    const opMap: Record<string, string> = {
       "=": "eq", "<>": "neq", "!=": "neq", ">": "gt", "<": "lt", ">=": "gte", "<=": "lte",
     };
-    const type = opMap[op] ?? "eq";
-    return { type: type as Condition["type"], left, right } as Condition;
+    const condType = opMap[op] ?? "eq";
+    // Try to parse the right side as a column expression;
+    // if it's a literal, use it directly
+    const right = this.#parseColumnExpr();
+    if (right.type === "literal") {
+      return { type: condType, left, right: right.value } as Condition;
+    }
+    // Column-to-column comparison → use expr condition
+    return { type: "expr", left, op: condType, right } as unknown as Condition;
   }
 
   #parseGroupBy(): ColumnExpr[] {

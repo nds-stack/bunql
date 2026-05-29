@@ -329,7 +329,8 @@ function condSQL(cond: Condition, ctx: Ctx): string {
     case "expr": {
       const left = colSQL(cond.left, ctx);
       const right = colSQL(cond.right, ctx);
-      return `${left} ${cond.op.toUpperCase()} ${right}`;
+      const opMap: Record<string, string> = { eq: "=", neq: "<>", gt: ">", lt: "<", gte: ">=", lte: "<=" };
+      return `${left} ${opMap[cond.op] ?? cond.op.toUpperCase()} ${right}`;
     }
     case "size": {
       pushVal(cond.count, ctx);

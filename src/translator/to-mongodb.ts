@@ -100,6 +100,17 @@ function translateSelect(n: SelectNode, params: unknown[]): MongoCommand {
           };
           if (j.type !== "left") lookup._joinType = j.type;
           pipeline.push({ $lookup: lookup });
+        } else if (j.on.type === "expr") {
+          // Column-to-column comparison: extract both sides
+          const rightCol = typeof j.on.right === "object" ? colName(j.on.right) : String(j.on.right);
+          const lookup: Record<string, unknown> = {
+            from: j.table.name,
+            localField: colName(j.on.left),
+            foreignField: rightCol,
+            as: j.table.name,
+          };
+          if (j.type !== "left") lookup._joinType = j.type;
+          pipeline.push({ $lookup: lookup });
         }
       }
     }

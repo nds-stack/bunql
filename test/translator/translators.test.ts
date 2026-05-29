@@ -142,6 +142,36 @@ describe("SQL → AST → MongoDB (round-trip)", () => {
     const cmd = astToMongo(ast);
     expect(cmd.method).toBe("insertOne");
   });
+
+  test("SQL LEFT JOIN → MQL $lookup", () => {
+    const sql = "SELECT * FROM users LEFT JOIN orders ON users.id = orders.user_id";
+    const ast = parseSQL(sql);
+    const cmd = astToMongo(ast);
+    expect(cmd.method).toBe("aggregate");
+    const pipeline = cmd.args[0] as Record<string, unknown>[];
+    const lookupStage = pipeline.find(s => (s as Record<string, unknown>).$lookup) as Record<string, unknown> | undefined;
+    expect(lookupStage).toBeDefined();
+    const lookup = lookupStage!.$lookup as Record<string, unknown>;
+    expect(lookup.from).toBe("orders");
+    expect(lookup.localField).toBe("id");
+    expect(lookup.foreignField).toBe("user_id");
+    expect(lookup._joinType).toBeUndefined(); // LEFT join doesn't set _joinType
+  });
+
+  test("SQL INNER JOIN → MQL $lookup with _joinType", () => {
+    const sql = "SELECT * FROM users JOIN orders ON users.id = orders.user_id";
+    const ast = parseSQL(sql);
+    const cmd = astToMongo(ast);
+    expect(cmd.method).toBe("aggregate");
+    const pipeline = cmd.args[0] as Record<string, unknown>[];
+    const lookupStage = pipeline.find(s => (s as Record<string, unknown>).$lookup) as Record<string, unknown> | undefined;
+    expect(lookupStage).toBeDefined();
+    const lookup = lookupStage!.$lookup as Record<string, unknown>;
+    expect(lookup.from).toBe("orders");
+    expect(lookup.localField).toBe("id");
+    expect(lookup.foreignField).toBe("user_id");
+    expect(lookup._joinType).toBe("inner");
+  });
 });
 
 describe("MQL → AST → SQL (round-trip)", () => {
@@ -385,7 +415,7 @@ describe("SQL advanced → AST → SQL round-trip", () => {
   test("SELECT ORDER BY + LIMIT + OFFSET with params", () => {
     const sql = "SELECT * FROM users ORDER BY name ASC LIMIT ? OFFSET ?";
     const ast = parseSQL(sql);
-    const result = astToSQL(ast, { dialect: "postgresql" });
+    const result = astToSQL(ast, "postgresql");
     expect(result.sql).toContain("ORDER BY");
     expect(result.sql).toContain("LIMIT");
     expect(result.sql).toContain("OFFSET");

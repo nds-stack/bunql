@@ -236,10 +236,10 @@ describe("SQL Parser", () => {
 
   test("parses INSERT...SELECT", () => {
     const ast = parseSQL("INSERT INTO archive SELECT * FROM users WHERE active = 0");
-    expect(ast.type).toBe("insert");
-    if (ast.type === "insert") {
-      expect(ast.select).toBeDefined();
+    if (ast.type === "insert" && ast.select) {
       expect(ast.select.type).toBe("select");
+    } else {
+      throw new Error(`Expected insert with select, got ${ast.type}`);
     }
   });
 
