@@ -62,13 +62,18 @@
 
 ```typescript
 import { BunQL } from "@nds-stack/bunql";
+import { MongoDriver } from "@nds-stack/bunql/driver";
+import { RedisDriver } from "@nds-stack/bunql/driver";
+import { PGDriver } from "@nds-stack/bunql/driver";
+import { MySQLDriver } from "@nds-stack/bunql/driver";
 
-// Backend auto-detected from URL
-new BunQL("./app.db");                               // → SQLite
-new BunQL(":memory:");                               // → SQLite (in-memory)
-new BunQL("mongodb://localhost:27017/mydb");         // → MongoDB (via MongoDriver)
-new BunQL("redis://localhost:6379");                 // → Redis (via RedisDriver)
-new BunQL("postgres://localhost:5432/mydb");         // → PostgreSQL (via PGDriver)
+// Each backend has its own driver class
+const db = new BunQL("./app.db");                    // → SQLite via bun:sqlite
+const dbMem = new BunQL(":memory:");                 // → SQLite in-memory
+const mongo = new MongoDriver("mongodb://localhost:27017/mydb");
+const redis = new RedisDriver("redis://localhost:6379");
+const pg = new PGDriver("postgres://localhost:5432/mydb");
+const mysql = new MySQLDriver("mysql://localhost:3306/mydb");
 ```
 
 ## Why bunql
@@ -79,8 +84,8 @@ Bunql translates queries through a **Universal AST** — write SQL, run on Mongo
 
 | Write this | Runs on |
 |------------|---------|
-| `db.query("SELECT name FROM users WHERE age > 25")` | SQLite, MongoDB, PostgreSQL |
-| `db.mql("users").find({ age: { $gt: 25 } })` | MongoDB, SQLite, PostgreSQL |
+| `db.query("SELECT name FROM users WHERE age > 25")` | SQLite, MongoDB, PostgreSQL, MySQL |
+| `db.mql("users").find({ age: { $gt: 25 } })` | SQLite, MongoDB, PostgreSQL, MySQL |
 
 ### Zero-dependency drivers
 
@@ -97,8 +102,13 @@ const db = new BunQL("./app.db");
 db.run("INSERT INTO users (name) VALUES (?)", ["Alice"]);
 const users = db.query("SELECT * FROM users WHERE active = ?", [true]);
 
-// Query Builder — Drizzle-compatible API (production, v0.5.0)
-db.select().from(users).where(eq(users.active, true)).all();
+// Tagged template SQL — type-safe query builder
+const rows = db.sql`SELECT * FROM users WHERE age > ${18} AND active = ${true}`.all();
+const single = db.sql`SELECT * FROM users WHERE id = ${1}`.get();
+
+// MongoDB-style MQL chain — runs on SQLite via translation
+db.mql("users").find({ age: { $gt: 25 }, active: true }).sort({ name: 1 }).limit(10).toArray();
+db.mql("users").insertOne({ name: "Bob", email: "b@t.com" });
 ```
 
 ### Beyond bun:sqlite parity
@@ -259,13 +269,13 @@ import { MongoDriver } from "@nds-stack/bunql/driver";
 const mongo = new MongoDriver("mongodb://localhost:27017/mydb");
 
 // SQL → AST → MongoDB — write SQL, run on MongoDB
+// Note: MongoDB does not support parameterized queries — use inline values
 const users = await mongo.query(
-  "SELECT name, email FROM users WHERE age > ? LIMIT ?",
-  [25, 10]
+  "SELECT name, email FROM users WHERE age > 25 LIMIT 10"
 );
 
 // INSERT / UPDATE / DELETE work the same way
-await mongo.run("INSERT INTO users (name, email) VALUES (?, ?)", ["Alice", "a@t.com"]);
+await mongo.run("INSERT INTO users (name, email) VALUES ('Alice', 'a@t.com')");
 
 await mongo.close();
 ```
@@ -276,10 +286,11 @@ import { RedisDriver } from "@nds-stack/bunql/driver";
 
 const redis = new RedisDriver("redis://:password@localhost:6379/0");
 
-// SQL → AST → Redis
+// SQL → AST → Redis — best performance with WHERE id = X (uses HGETALL)
 const user = await redis.query("SELECT * FROM users WHERE id = 1");
 // → HGETALL users:1
 
+// INSERT with id column → HSET
 await redis.run("INSERT INTO users (id, name, email) VALUES (2, 'Bob', 'b@t.com')");
 // → HSET users:2 name Bob email b@t.com
 
@@ -292,13 +303,13 @@ import { PGDriver } from "@nds-stack/bunql/driver";
 
 const pg = new PGDriver("postgres://user:pass@localhost:5432/mydb");
 
-// SQL → PG wire protocol — ? placeholders interpolated inline
+// SQL → PG wire protocol — use $1, $2 placeholders (PostgreSQL style)
 const users = await pg.query(
-  "SELECT name, email FROM users WHERE age > ?",
+  "SELECT name, email FROM users WHERE age > $1",
   [25]
 );
 
-await pg.run("INSERT INTO users (name, email) VALUES (?, ?)", ["Alice", "a@t.com"]);
+await pg.run("INSERT INTO users (name, email) VALUES ($1, $2)", ["Alice", "a@t.com"]);
 
 await pg.close();
 ```
@@ -959,7 +970,7 @@ db.run(sql, params)
 | Serialization | Manual | `db.serialize()` + `BunQL.deserialize()` |
 | Graceful shutdown | Manual | Drain pending ops + cache finalize |
 | Backend support | SQLite only | SQLite + MongoDB + Redis + PostgreSQL + MySQL — one query language |
-| Bundle size | Built-in | +41.7KB core / +5.1KB server (SQLite only) |
+| Bundle size | Built-in | +82.8KB core / +5.2KB server (SQLite) / +115.5KB driver (all backends) |
 
 bunql is not a replacement for `bun:sqlite` — it's an **ergonomic layer** on top. You still write raw SQL. The wrapper handles what `bun:sqlite` leaves bare: transactions, statement lifecycle, observability, graceful shutdown.
 
@@ -1166,7 +1177,7 @@ try {
 ## Limitations
 
 ### SQLite
-- **SQLite single-writer** — `run()` is synchronous, matching `bun:sqlite` directly. Peak throughput: **35-42K writes/s** with `synchronous=NORMAL`. Using `synchronous=FULL` reduces this significantly.
+- **SQLite single-writer** — `run()` is synchronous, matching `bun:sqlite` directly. On-disk throughput: **~40K writes/s** with `synchronous=NORMAL`. In-memory throughput exceeds **85M ops/s**.
 - **Fixed-size statement cache** — Max 100 cached statements. Highly diverse workloads trigger evictions.
 - **Single-process only** — Not designed for multi-process writes to the same SQLite file.
 
