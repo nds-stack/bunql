@@ -14,7 +14,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue?logo=typescript)](https://www.typescriptlang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-345-green)]()
-[![Bundle](https://img.shields.io/badge/bundle-99.8KB%20core%20%2F%20128.7KB%20driver-blue)]()
+[![Bundle](https://img.shields.io/badge/bundle-111.5KB%20core%20%2F%20133.6KB%20driver-blue)]()
 
 ---
 
@@ -276,9 +276,9 @@ import { MongoDriver } from "@nds-stack/bunql/driver";
 const mongo = new MongoDriver("mongodb://localhost:27017/mydb");
 
 // SQL → AST → MongoDB — write SQL, run on MongoDB
-// Note: MongoDB does not support parameterized queries — use inline values
 const users = await mongo.query(
-  "SELECT name, email FROM users WHERE age > 25 LIMIT 10"
+  "SELECT name, email FROM users WHERE age > ? AND status = ?",
+  [25, "active"]
 );
 
 // INSERT / UPDATE / DELETE work the same way
@@ -977,7 +977,7 @@ db.run(sql, params)
 | Serialization | Manual | `db.serialize()` + `BunQL.deserialize()` |
 | Graceful shutdown | Manual | Drain pending ops + cache finalize |
 | Backend support | SQLite only | SQLite + MongoDB + Redis + PostgreSQL + MySQL — one query language |
-| Bundle size | Built-in | +82.8KB core / +5.2KB server (SQLite) / +115.5KB driver (all backends) |
+| Bundle size | Built-in | +111.5KB core / +5.2KB server (SQLite) / +133.6KB driver (all backends) |
 
 bunql is not a replacement for `bun:sqlite` — it's an **ergonomic layer** on top. You still write raw SQL. The wrapper handles what `bun:sqlite` leaves bare: transactions, statement lifecycle, observability, graceful shutdown.
 
@@ -1092,7 +1092,7 @@ Benchmark of `@nds-stack/bunql` custom TCP drivers (PG, MySQL, MongoDB, Redis) a
 | **Redis** | SELECT | — | — | — |
 | **Redis** | INSERT | — | — | — |
 
-> SQLite SELECT overhead comes from BunQL's cache lookup + query parsing + row-to-object mapping. SQLite INSERT overhead is negligible because `run()` passes through directly to `bun:sqlite`. PG overhead comes from extended query protocol (Parse+Bind+Describe+Execute+Sync pipeline). MySQL uses simple COM_QUERY with inline params, keeping overhead under 2%. MongoDB has no baseline since Bun has no built-in MongoDB driver. Redis benchmark was skipped because Redis server was not available on the test machine.
+> SQLite SELECT overhead comes from BunQL's cache lookup + query parsing + row-to-object mapping. SQLite INSERT overhead is negligible because `run()` passes through directly to `bun:sqlite`. PG overhead comes from extended query protocol (Parse+Bind+Describe+Execute+Sync pipeline). MySQL uses simple COM_QUERY with inline params, keeping overhead under 2%. MongoDB has no baseline since Bun has no built-in MongoDB driver. Redis benchmark was skipped because Redis server was not available on the test machine. Bundle: 111.5KB core / 133.6KB driver / 69.7KB query / 5.2KB server.
 
 ---
 
@@ -1114,35 +1114,56 @@ Benchmark of `@nds-stack/bunql` custom TCP drivers (PG, MySQL, MongoDB, Redis) a
 | `BETWEEN` | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `IS NULL` / `IS NOT NULL` | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `AND` / `OR` / `NOT` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `$mod` / `$size` / `$type` / `$all` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `$elemMatch` | ⚠️ | ✅ | ⚠️ | ✅ | ❌ |
+| `$expr` (field-to-field) | ✅ | ✅ | ✅ | ✅ | ❌ |
 | **Advanced SQL** | | | | | |
-| `JOIN` (INNER/LEFT/RIGHT) | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `JOIN` (INNER/LEFT/RIGHT/FULL/CROSS/NATURAL) | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `GROUP BY` + aggregate functions | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `HAVING` | ✅ | ✅ | ✅ | ✅ | ❌ |
-| `DISTINCT` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `DISTINCT` / `COUNT(DISTINCT col)` | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `ORDER BY` / `LIMIT` / `OFFSET` | ✅ | ✅ | ✅ | ✅ | ⚠️ |
-| Subqueries `FROM (SELECT ...)` | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Subqueries `FROM (SELECT ...)` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| CTE `WITH ... AS` | ✅ | ✅ | ✅ | ❌ | ❌ |
+| `UNION` / `INTERSECT` / `EXCEPT` | ✅ | ✅ | ✅ | ❌ | ❌ |
+| `INSERT ... SELECT` | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Arithmetic `+`, `-`, `*`, `/`, `%` | ✅ | ✅ | ✅ | ⚠️ | ❌ |
 | `RETURNING` clause | ✅ | ✅ | ❌ | ❌ | ❌ |
+| `CREATE TABLE` / `DROP TABLE` | ✅ | ✅ | ✅ | ❌ | ❌ |
+| `BEGIN` / `COMMIT` / `ROLLBACK` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Aggregate pipeline stages** | | | | | |
 | `$match` → `WHERE` | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `$group` with accumulators | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `$sort` / `$limit` / `$skip` | ✅ | ✅ | ✅ | ✅ | ❌ |
-| `$project` → column list | ✅ | ✅ | ✅ | ✅ | ❌ |
-| `$lookup` → `LEFT JOIN` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `$project` (simple + computed) | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `$lookup` (simple + complex) | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `$unwind` | ❌ | ❌ | ❌ | ✅ | ❌ |
+| `$sample` | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
 | **MQL operators** | | | | | |
 | `$eq`, `$ne`, `$gt`, `$lt`, `$gte`, `$lte` | ✅ | — | — | ✅ | ❌ |
 | `$in`, `$nin` | ✅ | — | — | ✅ | ❌ |
-| `$regex` | ✅ | — | — | ✅ | ❌ |
+| `$regex` + `$options` (wildcard conversion) | ✅ | — | — | ✅ | ❌ |
 | `$exists` | ✅ | — | — | ✅ | ❌ |
 | `$and`, `$or`, `$not`, `$nor` | ✅ | — | — | ✅ | ❌ |
-| `$all`, `$size`, `$mod`, `$type` | ⚠️ | — | — | ✅ | ❌ |
+| `$all`, `$size`, `$mod`, `$type` | ✅ | — | — | ✅ | ❌ |
+| `$elemMatch`, `$expr` | ⚠️ | — | — | ✅ | ❌ |
+| **MQL update operators** | | | | | |
+| `$set` | ✅ | — | — | ✅ | ❌ |
+| `$inc` / `$unset` | ✅ | — | — | ✅ | ❌ |
+| `$push` / `$pull` | ✅ | — | — | ✅ | ❌ |
+| **MQL accumulators** | | | | | |
+| `$sum`, `$avg`, `$min`, `$max`, `$count` | ✅ | — | — | ✅ | ❌ |
+| `$push`, `$addToSet` | ✅ | — | — | ✅ | ❌ |
+| `$first`, `$last` | ⚠️ | — | — | ✅ | ❌ |
+| **DDL** | | | | | |
+| `CREATE TABLE` | ✅ | ✅ | ✅ | ❌ | ❌ |
+| `DROP TABLE` | ✅ | ✅ | ✅ | ❌ | ❌ |
 | **Transactions** | | | | | |
 | BEGIN / COMMIT / ROLLBACK | ✅ | ✅ | ✅ | ✅ | ✅ |
 | SAVEPOINT nesting | ✅ | ✅ | ✅ | ✅ | ❌ |
 | **Connection** | | | | | |
 | Connection pooling | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Parameterized queries | ✅ | ✅ | ⚠️ | ❌ | ❌ |
+| Parameterized queries | ✅ | ✅ | ✅ | ✅ | ❌ |
 | **Native dialect** | | | | | |
 | Placeholder style | `?` | `$1` | `?` | — | — |
 | Identifier quoting | — | `"col"` | `` `col` `` | — | — |
@@ -1191,9 +1212,10 @@ try {
 - **Single-process only** — Not designed for multi-process writes to the same SQLite file.
 
 ### Query Engine (MongoDB/Redis/PG/MySQL)
-- **SQL → MongoDB coverage**: Full CRUD, WHERE/JOIN/GROUP BY/ORDER BY/LIMIT. Does NOT cover `$geoNear`, `$text`, `$facet`, `$graphLookup`.
-- **MQL → SQL coverage**: `find`, `aggregate` with `$match`/`$group`/`$sort`/`$limit`/`$lookup`. Does NOT cover `$unwind` (SQLite doesn't have UNNEST), `$sample`, nested sub-document updates.
-- **`$regex` ↔ `LIKE` is best-effort**: MQL `{ field: { $regex: "^abc" } }` translates to SQL `field LIKE '^abc'`. SQL `LIKE` does not interpret regex anchors (`^`, `$`), quantifiers (`*`, `+`), or character classes (`\d`, `\w`). The `i` flag for case-insensitive matching uses `LOWER()` wrappers. For full regex support, use the MongoDB driver directly.
+- **SQL → MongoDB coverage**: Full CRUD, WHERE (all operators), JOIN (INNER/LEFT/RIGHT/FULL/CROSS/NATURAL), GROUP BY, ORDER BY, LIMIT/OFFSET, CTE, UNION, subqueries, DDL (CREATE/DROP TABLE). Does NOT cover `$geoNear`, `$text`, `$facet`, `$graphLookup`.
+- **MQL → SQL coverage**: All 28 filter operators, 9 accumulator types, update operators ($inc/$unset/$push/$pull), computed $project, complex $lookup. Does NOT cover `$unwind` (SQLite doesn't have UNNEST), `$first/$last SQL` window functions (not all dialects), nested sub-document updates.
+- **`$regex` ↔ `LIKE` is bidirectional**: SQL LIKE wildcards (`%`/`_`) are converted to regex (`.*`/`.`) when translating to MQL, and regex patterns are converted back to LIKE wildcards (strip `^`/`$`, convert `.*`→`%`, `.`→`_`) when translating to SQL. Regex anchors (`^`, `$`), quantifiers (`*`, `+`), and character classes (`[abc]`, `\d`) beyond simple wildcards are best-effort.
+- **`$elemMatch` MySQL is simple-only**: MySQL translation uses `JSON_SEARCH()` which supports simple value matching only. Complex conditions like `{ $elemMatch: { x: 1, y: { $gt: 5 } } }` require `JSON_TABLE()` which is not yet implemented. Use PostgreSQL or SQLite for complex `$elemMatch` queries.
 - **Redis coverage**: Subset only — `HGETALL`, `HSET`, `DEL`, `ZRANGE`. Complex queries (GROUP BY, JOIN) not supported on Redis.
 - **Drivers**: All 4 network drivers (MongoDB, Redis, PostgreSQL, MySQL) are production-ready via `@nds-stack/bunql/driver`. Each uses custom TCP + wire protocol, zero npm dependencies.
 
@@ -1269,14 +1291,7 @@ Write operations via the `/run` endpoint are synchronous (direct to `bun:sqlite`
 
 ## Stability
 
-- **v1.0.0-dev (current)** — All 5 backends + query builder + relations API + unified transactions
-- **v0.8.0 (stable)** — TransactionManager across all backends, PG extended query + MySQL prepared statements
-- **v0.7.0 (stable)** — MySQL driver (custom TCP + wire protocol, mysql_native_password, prepared statements)
-- **v0.6.0 (stable)** — PostgreSQL driver (custom TCP + wire protocol, MD5 auth, extended query protocol)
-- **v0.5.0 (stable)** — Query builder (tagged template + MQL chain + conditions helpers)
-- **v0.4.2 (stable)** — Redis driver (custom TCP + RESP, AUTH + SELECT, MULTI/EXEC)
-- **v0.4.1 (stable)** — MongoDB driver (custom TCP + BSON, SCRAM-SHA-256, sessions)
-- **v0.4.0 (stable)** — Universal AST + SQL parser + MQL parser + bidirectional translators
+- **v0.3.0-beta.1 (current)** — All 5 backends + bidirectional SQL↔MQL + 28 MQL operators + 9 accumulators + CTE/UNION/DDL + parameterized LIMIT/OFFSET + round-trip wildcard conversion
 - **v0.3.0 (stable)** — Statement format control, transaction modes, pragma helper, serialize, verbose mode
 - **345 tests** — unit, integration, concurrency, stress, FTS5, parser, translators, BSON, RESP, PG wire, MySQL wire, transactions
 - **5000 sequential writes** — verified stable
@@ -1287,7 +1302,7 @@ Write operations via the `/run` endpoint are synchronous (direct to `bun:sqlite`
 - **Hand-written parsers** — SQL parser (recursive descent), MQL parser (object traversal), all wire protocols
 - **Observability** — built-in metrics counters, cache stats, WAL monitoring, slow query detection, verbose tracing
 - **Audit score** — 100/100 (zero BLOCKING issues)
-- **Bundle** — 82.8KB core, 5.2KB server, 115.5KB driver (MongoDB + Redis + PG + MySQL)
+- **Bundle** — 111.5KB core, 5.2KB server, 133.6KB driver (MongoDB + Redis + PG + MySQL), 69.7KB query (SQL + MQL builder)
 
 ---
 
