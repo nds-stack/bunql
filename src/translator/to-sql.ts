@@ -1,4 +1,4 @@
-import type { ASTNode, ColumnExpr, Condition, JoinNode, OrderByNode, TableRef, ValueExpr, ParamRef } from "../ast/ast.ts";
+import type { ASTNode, ColumnExpr, Condition, JoinNode, TableRef, ValueExpr, ParamRef } from "../ast/ast.ts";
 
 export interface SQLResult { sql: string; params: unknown[]; }
 export type SQLDialect = "sqlite" | "postgresql" | "mysql";
@@ -107,8 +107,8 @@ function translateCreateTable(n: import("../ast/ast.ts").CreateTableNode, ctx: C
 function translateAggregate(n: import("../ast/ast.ts").AggregateNode, ctx: Ctx): SQLResult {
   const tableName = q(n.table, ctx);
   let selectColumns: string[] = [];
-  let whereClauses: string[] = [];
-  let joinClauses: string[] = [];
+  const whereClauses: string[] = [];
+  const joinClauses: string[] = [];
   let groupByColumns: string[] = [];
   let orderByClauses: string[] = [];
   let limitVal: number | undefined;

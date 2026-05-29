@@ -55,7 +55,8 @@ export class MySQLDriver implements DriverAdapter {
     if (typeof v === "number") return String(v);
     if (typeof v === "boolean") return v ? "1" : "0";
     const s = String(v);
-    return "'" + s.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/\0/g, "\\0").replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\x1a/g, "\\Z") + "'";
+    const ctrlZ = String.fromCharCode(26);
+    return "'" + s.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/\0/g, "\\0").replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(new RegExp(ctrlZ, "g"), "\\Z") + "'";
   }
 
   buildQuery(sql: string, params: unknown[]): string {

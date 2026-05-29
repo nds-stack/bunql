@@ -8,7 +8,7 @@ export async function performAuth(
   user: string,
   password?: string,
 ): Promise<void> {
-  let reader = new PGReader(new Uint8Array(0));
+  const reader = new PGReader(new Uint8Array(0));
 
   for (let attempts = 0; attempts < 100; attempts++) {
     const raw = await readBuffer();

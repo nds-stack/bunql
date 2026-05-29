@@ -18,7 +18,7 @@ export function md5(str: string): string {
   for (let i = 0; i < padded.length; i += 64) {
     const w: number[] = [];
     for (let j = 0; j < 16; j++) w[j] = dv.getUint32(i + j * 4, true);
-    let [A, B, C, D] = [a, b, c, d];
+    const [A, B, C, D] = [a, b, c, d];
 
     for (let j = 0; j < 64; j++) {
       const idx = j < 16 ? j : j < 32 ? (5 * j + 1) % 16 : j < 48 ? (3 * j + 5) % 16 : (7 * j) % 16;
