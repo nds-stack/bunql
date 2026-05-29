@@ -217,7 +217,7 @@ export function encodeStmtExecute(seq: number, stmtId: number, params: (Uint8Arr
   let totalLen = 1 + 4 + 1 + 4 + nullBitmapLen + 1;
   const valueSegments: Uint8Array[] = [];
   for (let i = 0; i < params.length; i++) {
-    totalLen += 3; // type(2) + unsigned(1)
+    totalLen += 2; // type(1) + unsigned(1)
     const p = params[i];
     if (p !== null && p !== undefined) {
       const lenEnc = encodeLenEnc(p.length);
@@ -247,8 +247,7 @@ export function encodeStmtExecute(seq: number, stmtId: number, params: (Uint8Arr
 
   for (let i = 0; i < params.length; i++) {
     const p = params[i];
-    payload[off++] = 0x0f; // MYSQL_TYPE_VAR_STRING
-    payload[off++] = 0;    // type continuation
+    payload[off++] = 0x0f; // MYSQL_TYPE_VAR_STRING (1 byte, not LE uint16!)
     payload[off++] = 0;    // unsigned flag
     if (p !== null && p !== undefined) {
       const lenEnc = encodeLenEnc(p.length);
