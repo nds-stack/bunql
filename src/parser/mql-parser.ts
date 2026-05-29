@@ -7,11 +7,29 @@ import type { ASTNode, AggregateStage, ColumnExpr, Condition, Literal } from "..
 export function parseMQL(collection: string, method: string, args: unknown[]): ASTNode {
   switch (method) {
     case "find": return parseFind(collection, args[0] as Record<string, unknown> | undefined, args[1] as Record<string, unknown> | undefined);
+    case "findOne": {
+      const node = parseFind(collection, args[0] as Record<string, unknown> | undefined, args[1] as Record<string, unknown> | undefined);
+      if (node.type === "select") node.limit = 1;
+      return node;
+    }
     case "aggregate": return parseAggregate(collection, args[0] as Record<string, unknown>[]);
     case "insertOne": return parseInsert(collection, args[0] as Record<string, Literal>);
     case "insertMany": return parseInsertMany(collection, args[0] as Record<string, Literal>[]);
     case "updateOne": return parseUpdate(collection, args[0] as Record<string, unknown>, args[1] as Record<string, unknown>);
+    case "updateMany": return parseUpdate(collection, args[0] as Record<string, unknown>, args[1] as Record<string, unknown>);
     case "deleteOne": return parseDelete(collection, args[0] as Record<string, unknown>);
+    case "deleteMany": return parseDelete(collection, args[0] as Record<string, unknown>);
+    case "findOneAndUpdate": {
+      const node = parseFind(collection, args[0] as Record<string, unknown> | undefined);
+      if (node.type === "select") node.limit = 1;
+      return node;
+    }
+    case "findOneAndDelete": return parseFind(collection, args[0] as Record<string, unknown> | undefined);
+    case "replaceOne": {
+      const where = mqlToCondition(args[0] as Record<string, unknown>);
+      const set = args[1] as Record<string, Literal>;
+      return { type: "update", table: collection, set, where };
+    }
     default: throw new Error(`Unknown MQL method: ${method}`);
   }
 }
@@ -145,7 +163,14 @@ function mqlOperator(col: ColumnExpr, ops: Record<string, unknown>): Condition {
   const entries = Object.entries(ops);
   if (entries.length === 0) return { type: "eq", left: col, right: null };
 
-  const conditions: Condition[] = entries.map(([op, val]) => {
+  // Check for $regex with $options
+  const hasRegex = ops.$regex !== undefined;
+  if (hasRegex) {
+    const pattern = String(ops.$regex);
+    return { type: "like" as const, left: col, pattern };
+  }
+
+  const conditions: (Condition | null)[] = entries.map(([op, val]) => {
     switch (op) {
       case "$eq": return { type: "eq" as const, left: col, right: val as Literal };
       case "$ne": return { type: "neq" as const, left: col, right: val as Literal };
@@ -155,17 +180,19 @@ function mqlOperator(col: ColumnExpr, ops: Record<string, unknown>): Condition {
       case "$lte": return { type: "lte" as const, left: col, right: val as Literal };
       case "$in": return { type: "in" as const, left: col, values: (val as Literal[]) };
       case "$nin": return { type: "notIn" as const, left: col, values: (val as Literal[]) };
-      case "$regex": return { type: "like" as const, left: col, pattern: String(val) };
+      case "$regex": return null; // handled above
+      case "$options": return null; // handled above with $regex
       case "$exists": return val
         ? { type: "isNotNull" as const, left: col }
         : { type: "isNull" as const, left: col };
       case "$and": return { type: "and" as const, conditions: (val as Record<string, unknown>[]).map((o) => mqlToCondition(o)) };
       case "$or": return { type: "or" as const, conditions: (val as Record<string, unknown>[]).map((o) => mqlToCondition(o)) };
+      case "$nor": return { type: "and" as const, conditions: (val as Record<string, unknown>[]).map((o) => ({ type: "not" as const, condition: mqlToCondition(o) })) };
       case "$not": return { type: "not" as const, condition: mqlToCondition(val as Record<string, unknown>) };
       default: return { type: "eq" as const, left: col, right: val as Literal };
     }
   });
 
-  const result = conditions.length === 1 ? conditions[0]! : { type: "and" as const, conditions };
+  const result = conditions.length === 1 ? conditions[0]! : { type: "and" as const, conditions: conditions.filter((c): c is Condition => c !== null) };
   return result;
 }
