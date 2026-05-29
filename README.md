@@ -1129,14 +1129,12 @@ Benchmark of `@nds-stack/bunql` custom TCP drivers (PG, MySQL, MongoDB, Redis) a
 | `INSERT ... SELECT` | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Arithmetic `+`, `-`, `*`, `/`, `%` | ✅ | ✅ | ✅ | ⚠️ | ❌ |
 | `RETURNING` clause | ✅ | ✅ | ❌ | ❌ | ❌ |
-| `CREATE TABLE` / `DROP TABLE` | ✅ | ✅ | ✅ | ❌ | ❌ |
-| `BEGIN` / `COMMIT` / `ROLLBACK` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Aggregate pipeline stages** | | | | | |
 | `$match` → `WHERE` | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `$group` with accumulators | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `$sort` / `$limit` / `$skip` | ✅ | ✅ | ✅ | ✅ | ❌ |
-| `$project` (simple + computed) | ✅ | ✅ | ✅ | ✅ | ❌ |
-| `$lookup` (simple + complex) | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `$project` (simple + computed) | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
+| `$lookup` (simple + complex) | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
 | `$unwind` | ❌ | ❌ | ❌ | ✅ | ❌ |
 | `$sample` | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
 | **MQL operators** | | | | | |
@@ -1159,14 +1157,17 @@ Benchmark of `@nds-stack/bunql` custom TCP drivers (PG, MySQL, MongoDB, Redis) a
 | `CREATE TABLE` | ✅ | ✅ | ✅ | ❌ | ❌ |
 | `DROP TABLE` | ✅ | ✅ | ✅ | ❌ | ❌ |
 | **Transactions** | | | | | |
-| BEGIN / COMMIT / ROLLBACK | ✅ | ✅ | ✅ | ✅ | ✅ |
+| BEGIN / COMMIT / ROLLBACK | ✅ | ✅ | ✅ | ❌ | ❌ |
 | SAVEPOINT nesting | ✅ | ✅ | ✅ | ✅ | ❌ |
 | **Connection** | | | | | |
 | Connection pooling | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Parameterized queries | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Raw SQL passthrough | ✅ | ✅ | ✅ | ✅ | ⚠️ |
 | **Native dialect** | | | | | |
 | Placeholder style | `?` | `$1` | `?` | — | — |
 | Identifier quoting | — | `"col"` | `` `col` `` | — | — |
+
+> **Query Builder API** (`@nds-stack/bunql/query`): ✅ All backends — Chainable SQL/MQL builder with unified interface. See [API](#api) for details.
 
 ---
 
@@ -1291,7 +1292,7 @@ Write operations via the `/run` endpoint are synchronous (direct to `bun:sqlite`
 
 ## Stability
 
-- **v0.3.0-beta.1 (current)** — All 5 backends + bidirectional SQL↔MQL + 28 MQL operators + 9 accumulators + CTE/UNION/DDL + parameterized LIMIT/OFFSET + round-trip wildcard conversion
+- **v0.3.0-beta.2 (current)** — All 5 backends + bidirectional SQL↔MQL + 28 MQL operators + 9 accumulators + CTE/UNION/DDL + parameterized LIMIT/OFFSET + round-trip wildcard conversion + accurate feature matrix
 - **v0.3.0 (stable)** — Statement format control, transaction modes, pragma helper, serialize, verbose mode
 - **345 tests** — unit, integration, concurrency, stress, FTS5, parser, translators, BSON, RESP, PG wire, MySQL wire, transactions
 - **5000 sequential writes** — verified stable

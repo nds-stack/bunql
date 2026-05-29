@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.3.0-beta.2] — 2026-05-30
+
+### Fixed
+- README matrix: Remove duplicate DDL and Transaction rows
+- README matrix: Correct MongoDB/Redis transaction support status (✅→❌)
+- README matrix: Clarify `$project`/`$lookup` limitations for SQL backends (✅→⚠️)
+- README matrix: Remove duplicate MQL operator entries from WHERE conditions
+- README matrix: Add Raw SQL passthrough row and Query Builder API footer note
+
 ## [v0.3.0-beta.1] — 2025-05-29
 
 ### Added
