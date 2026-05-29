@@ -813,75 +813,7 @@ interface FTSResult {
 }
 ```
 
----
 
-## Migrating from v0.1.0-alpha.x
-
-### Transaction errors no longer wrapped
-
-```diff
-- import { BunQL, TransactionError } from "@nds-stack/bunql";
-+ import { BunQL } from "@nds-stack/bunql";
-
-  try {
-    await db.transaction(async (tx) => { ... });
-  } catch (error) {
--   if (error instanceof TransactionError) { ... }
-+   // Original error is re-thrown directly
-+   console.error(error);
-  }
-```
-
-### FTS5 methods are synchronous
-
-```diff
-- await db.fts.create("articles", ["title", "body"]);
-- await db.fts.insert("articles", { title: "...", body: "..." });
-+ db.fts.create("articles", ["title", "body"]);
-+ db.fts.insert("articles", { title: "...", body: "..." });
-```
-
-### `run()` is synchronous
-
-```diff
-- import { BunQL } from "@nds-stack/bunql";
--
-- // v0.1.x: run() was async (wrapped in Promise)
-- await db.run("INSERT INTO users (name) VALUES (?)", ["Alice"]);
-- const result = await db.run("INSERT INTO users (name) VALUES (?)", ["Bob"]);
-+ // v0.2.0: run() is synchronous — direct to bun:sqlite
-+ db.run("INSERT INTO users (name) VALUES (?)", ["Alice"]);
-+ const result = db.run("INSERT INTO users (name) VALUES (?)", ["Bob"]);
-+ // result: { changes: 1, lastInsertRowid: 2, durationMs: 0.0 }
-```
-
-### `beforeWrite` / `afterWrite` hooks no longer called by `run()`
-
-```diff
-  const db = new BunQL("./app.db", {
--   hooks: {
--     beforeWrite: (sql) => console.log("Writing:", sql),
--     afterWrite: (sql, params, ms) => console.log(`Done in ${ms}ms`),
--   },
-  });
-```
-
-These hooks are no longer called by `run()` since v0.2.0 (sync path has no hook point). They are still called for operations inside `batch()`. The `beforeTransaction` / `afterTransaction` hooks remain for transaction monitoring.
-
-### WriteQueue no longer used for `run()`
-
-The `WriteQueue` is now only used for operations that need serialization: `transaction()`, `batch()`, `exec()`, `backup()`, `vacuum()`, `checkpoint()`. Individual writes (`run()`) bypass the queue entirely.
-
-### Reader pool requires WAL mode
-
-```typescript
-const db = new BunQL("./app.db", {
-  wal: true,  // required when readerPool > 0
-  readerPool: 3,
-});
-```
-
----
 
 ## Architecture
 
