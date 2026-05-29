@@ -219,7 +219,8 @@ function translateAggregate(n: import("../ast/ast.ts").AggregateNode, ctx: Ctx):
         if ("pipeline" in stage && stage.pipeline) {
           joinClauses.push(` LEFT JOIN ${q(stage.from, ctx)} AS ${q(stage.as, ctx)} ON 1=1`);
         } else if ("localField" in stage) {
-          joinClauses.push(` LEFT JOIN ${q(stage.from, ctx)} ON ${tableName}.${stage.localField} = ${q(stage.from, ctx)}.${stage.foreignField}`);
+          const joinType = "_joinType" in stage ? String((stage as Record<string, unknown>)._joinType) : "left";
+          joinClauses.push(` ${joinType.toUpperCase()} JOIN ${q(stage.from, ctx)} ON ${tableName}.${stage.localField} = ${q(stage.from, ctx)}.${stage.foreignField}`);
         }
         break;
       }
@@ -274,12 +275,20 @@ function condSQL(cond: Condition, ctx: Ctx): string {
     case "gte": pushVal(cond.right, ctx); return `${colSQL(cond.left, ctx)} >= ${ph(ctx)}`;
     case "lte": pushVal(cond.right, ctx); return `${colSQL(cond.left, ctx)} <= ${ph(ctx)}`;
     case "like": {
-      pushVal(cond.pattern, ctx);
+      let pattern = cond.pattern;
+      if (typeof pattern === "string") {
+        pattern = pattern.replace(/^\^/, '').replace(/\$$/, '').replace(/\\\./g, '.').replace(/\.\*/g, '%').replace(/\./g, '_');
+      }
+      pushVal(pattern, ctx);
       if (cond.flags?.includes("i")) return `LOWER(${colSQL(cond.left, ctx)}) LIKE LOWER(${ph(ctx)})`;
       return `${colSQL(cond.left, ctx)} LIKE ${ph(ctx)}`;
     }
     case "notLike": {
-      pushVal(cond.pattern, ctx);
+      let pattern = cond.pattern;
+      if (typeof pattern === "string") {
+        pattern = pattern.replace(/^\^/, '').replace(/\$$/, '').replace(/\\\./g, '.').replace(/\.\*/g, '%').replace(/\./g, '_');
+      }
+      pushVal(pattern, ctx);
       if (cond.flags?.includes("i")) return `LOWER(${colSQL(cond.left, ctx)}) NOT LIKE LOWER(${ph(ctx)})`;
       return `${colSQL(cond.left, ctx)} NOT LIKE ${ph(ctx)}`;
     }
@@ -297,12 +306,17 @@ function condSQL(cond: Condition, ctx: Ctx): string {
     }
     case "elemMatch": {
       const col = colSQL(cond.left, ctx);
-      if (ctx.dialect === "postgresql") {
-        const subCond = condSQL(cond.condition, ctx);
-        return `EXISTS (SELECT 1 FROM jsonb_array_elements(${col}) AS elem WHERE ${subCond.replace(/elem\./g, "")})`;
-      }
       if (ctx.dialect === "mysql") {
-        return `JSON_CONTAINS(${col}, 'true') = 1`; // simplified
+        let subCondStr = "";
+        const inner = cond.condition;
+        if ("left" in inner && "right" in inner) {
+          pushVal((inner as { right: ValueExpr }).right, ctx);
+          subCondStr = ph(ctx);
+        }
+        return `JSON_SEARCH(${col}, 'one', ${subCondStr || '?%'}, NULL, '$[*]') IS NOT NULL`;
+      }
+      if (ctx.dialect === "postgresql") {
+        return `EXISTS (SELECT 1 FROM jsonb_array_elements(${col}) AS elem WHERE ${condSQL(cond.condition, ctx)})`;
       }
       return `EXISTS (SELECT 1 FROM json_each(${col}) WHERE ${condSQL(cond.condition, ctx)})`;
     }

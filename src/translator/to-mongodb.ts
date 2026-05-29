@@ -38,7 +38,8 @@ function resolveValue(val: ValueExpr, params: unknown[]): unknown {
 }
 
 function likeToRegex(pattern: string): string {
-  return pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*').replace(/_/g, '.');
+  const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*').replace(/_/g, '.');
+  return `^${escaped}$`;
 }
 
 function translateSelect(n: SelectNode, params: unknown[]): MongoCommand {
@@ -89,7 +90,14 @@ function translateSelect(n: SelectNode, params: unknown[]): MongoCommand {
       for (const j of n.joins) {
         if (j.on.type === "eq") {
           const rightVal = typeof j.on.right === "string" ? j.on.right.split(".").pop() ?? j.on.right : String(j.on.right);
-          pipeline.push({ $lookup: { from: j.table.name, localField: colName(j.on.left), foreignField: rightVal, as: j.table.name } });
+          const lookup: Record<string, unknown> = {
+            from: j.table.name,
+            localField: colName(j.on.left),
+            foreignField: rightVal,
+            as: j.table.name,
+          };
+          if (j.type !== "left") lookup._joinType = j.type;
+          pipeline.push({ $lookup: lookup });
         }
       }
     }
@@ -303,12 +311,7 @@ function condToMQL(cond: Condition, params: unknown[]): Record<string, unknown> 
       return { [colName(cond.left)]: { $size: count } };
     }
     case "typeCheck": {
-      const typeMap: Record<string, number | string> = {
-        double: 1, string: 2, object: 3, array: 4,
-        bool: 8, date: 9, null: 10, int: 16, long: 18,
-      };
-      const typeCode = typeMap[cond.bsonType.toLowerCase()] ?? cond.bsonType;
-      return { [colName(cond.left)]: { $type: typeCode } };
+      return { [colName(cond.left)]: { $type: cond.bsonType } };
     }
     case "elemMatch":
       return { [colName(cond.left)]: { $elemMatch: condToMQL(cond.condition, params) } };
@@ -328,7 +331,17 @@ function condToMQL(cond: Condition, params: unknown[]): Record<string, unknown> 
     case "isNotNull": return { [colName(cond.left)]: { $ne: null } };
     case "and": return cond.conditions.length === 0 ? {} : { $and: cond.conditions.map(c => condToMQL(c, params)) };
     case "or": return cond.conditions.length === 0 ? {} : { $or: cond.conditions.map(c => condToMQL(c, params)) };
-    case "not": return { $nor: [condToMQL(cond.condition, params)] };
+    case "not": {
+      const inner = condToMQL(cond.condition, params);
+      const entries = Object.entries(inner);
+      if (entries.length === 1) {
+        const [field, expr] = entries[0]!;
+        if (typeof expr === "object" && expr !== null && !Array.isArray(expr) && !(expr instanceof Date)) {
+          return { [field]: { $not: expr } };
+        }
+      }
+      return { $nor: [inner] };
+    }
     default: return {};
   }
 }
