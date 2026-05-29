@@ -134,13 +134,35 @@ function parseGroupStage(value: Record<string, unknown>): AggregateStage {
   return { stage: "group", id: id ?? {}, accumulators: acc };
 }
 
-function parseLookupStage(value: Record<string, string>): AggregateStage {
+function parseLookupStage(value: Record<string, unknown>): AggregateStage {
+  const from = String(value.from ?? "");
+  const as = String(value.as ?? "");
+
+  // Complex variant: has 'pipeline' field
+  if (value.pipeline && Array.isArray(value.pipeline)) {
+    const letVars = value.let as Record<string, string> | undefined;
+    const pipeline = (value.pipeline as Record<string, unknown>[]).map((stage) => {
+      const entries = Object.entries(stage);
+      if (entries.length === 0) return { stage: "limit", count: 0 } as AggregateStage;
+      const [key, val] = entries[0]!;
+      switch (key) {
+        case "$match": return { stage: "match", condition: mqlToCondition(val as Record<string, unknown>) } as AggregateStage;
+        case "$project": return { stage: "project", fields: val as Record<string, number | string | boolean> } as AggregateStage;
+        case "$limit": return { stage: "limit", count: val as number } as AggregateStage;
+        case "$sort": return { stage: "sort", fields: parseSortObj(val as Record<string, number>) } as AggregateStage;
+        default: return { stage: "limit", count: 0 } as AggregateStage;
+      }
+    });
+    return { stage: "lookup", from, let: letVars, pipeline, as };
+  }
+
+  // Simple variant: localField/foreignField
   return {
     stage: "lookup",
-    from: value.from ?? "",
-    localField: value.localField ?? "",
-    foreignField: value.foreignField ?? "",
-    as: value.as ?? "",
+    from,
+    localField: String(value.localField ?? ""),
+    foreignField: String(value.foreignField ?? ""),
+    as,
   };
 }
 
@@ -218,9 +240,12 @@ function mqlOperator(col: ColumnExpr, ops: Record<string, unknown>): Condition {
         return { type: "and" as const, conditions: allVals.map(v => ({ type: "eq" as const, left: col, right: v })) };
       }
       case "$size": {
-        return { type: "eq" as const, left: col, right: null }; // placeholder
+        const count = val as Literal;
+        return { type: "size" as const, left: col, count };
       }
-      case "$type": return { type: "isNotNull" as const, left: col }; // approximate: type check exists
+      case "$type": {
+        return { type: "typeCheck" as const, left: col, bsonType: String(val) };
+      }
       default: return { type: "eq" as const, left: col, right: val as Literal };
     }
   });

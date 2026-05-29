@@ -3,7 +3,7 @@
  * @description Hand-written recursive descent SQL parser — tokens → Universal AST.
  */
 import { Lexer, type Token } from "./sql-lexer.ts";
-import type { ASTNode, ColumnExpr, Condition, JoinNode, OrderByNode, SelectNode, TableRef, ValueExpr } from "../ast/ast.ts";
+import type { ASTNode, ColumnExpr, Condition, CreateTableNode, JoinNode, OrderByNode, SelectNode, TableRef, ValueExpr } from "../ast/ast.ts";
 import { ParseError } from "../errors/parse-error.ts";
 
 export { ParseError };
@@ -33,6 +33,7 @@ class Parser {
       case "insert": return this.#parseInsert();
       case "update": return this.#parseUpdate();
       case "delete": return this.#parseDelete();
+      case "create": return this.#parseCreateTable();
       default:
         throw new ParseError(`Unexpected keyword: ${kw}`, this.#current.pos);
     }
@@ -107,6 +108,52 @@ class Parser {
     const table = this.#parseIdentifier();
     const where = this.#match("where") ? this.#parseWhere() : undefined;
     return { type: "delete", table, where };
+  }
+
+  #parseCreateTable(): CreateTableNode {
+    this.#expect("create");
+    this.#expect("table");
+
+    const ifNotExists = this.#match("if") && this.#match("not") && this.#match("exists");
+
+    const table = this.#parseIdentifier();
+    this.#expect("(");
+
+    const columns: import("../ast/ast.ts").ColumnDef[] = [];
+
+    do {
+      if (this.#current.type === "comma") this.#advance();
+
+      const name = this.#parseIdentifier();
+      const dataType = this.#parseIdentifier();
+
+      let primaryKey = false;
+      let notNull = false;
+      let unique = false;
+      let defaultValue: import("../ast/ast.ts").Literal | undefined;
+
+      while (this.#current.type === "keyword") {
+        if (this.#match("primary")) {
+          this.#expect("key");
+          primaryKey = true;
+        } else if (this.#match("not")) {
+          this.#expect("null");
+          notNull = true;
+        } else if (this.#match("unique")) {
+          unique = true;
+        } else if (this.#match("default")) {
+          defaultValue = this.#parseLiteral() as import("../ast/ast.ts").Literal;
+        } else {
+          break;
+        }
+      }
+
+      columns.push({ name, dataType, primaryKey, notNull, unique, defaultValue });
+    } while (this.#current.type === "comma");
+
+    this.#expect(")");
+
+    return { type: "createTable", table, columns, ifNotExists };
   }
 
   #parseColumns(): ColumnExpr[] {

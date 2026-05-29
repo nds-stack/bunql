@@ -3,7 +3,7 @@
  * @description Universal AST node types — single IR for all query languages (SQL, MQL, Redis).
  */
 
-export type ASTNode = SelectNode | InsertNode | UpdateNode | DeleteNode | AggregateNode | RawNode;
+export type ASTNode = SelectNode | InsertNode | UpdateNode | DeleteNode | AggregateNode | CreateTableNode | RawNode;
 
 export interface SelectNode {
   type: "select";
@@ -60,6 +60,22 @@ export interface RawNode {
   params?: unknown[];
 }
 
+export interface ColumnDef {
+  name: string;
+  dataType: string;
+  primaryKey?: boolean;
+  notNull?: boolean;
+  unique?: boolean;
+  defaultValue?: Literal;
+}
+
+export interface CreateTableNode {
+  type: "createTable";
+  table: string;
+  columns: ColumnDef[];
+  ifNotExists?: boolean;
+}
+
 export type AggregateStage =
   | { stage: "match"; condition: Condition }
   | { stage: "group"; id: Record<string, string | null>; accumulators: Record<string, Accumulator> }
@@ -68,6 +84,7 @@ export type AggregateStage =
   | { stage: "skip"; count: number }
   | { stage: "project"; fields: Record<string, number | string | boolean> }
   | { stage: "lookup"; from: string; localField: string; foreignField: string; as: string }
+  | { stage: "lookup"; from: string; let?: Record<string, string>; pipeline: AggregateStage[]; as: string }
   | { stage: "unwind"; path: string; preserveNullAndEmptyArrays?: boolean; includeArrayIndex?: string };
 
 export type Accumulator = { func: "sum" | "avg" | "min" | "max" | "count" | "push"; field: string };
@@ -110,6 +127,7 @@ export type Condition =
   | AndCondition | OrCondition | NotCondition
   | LikeCondition | NotLikeCondition
   | ModCondition
+  | SizeCondition | TypeCheckCondition
   | InCondition | NotInCondition
   | BetweenCondition
   | IsNullCondition | IsNotNullCondition;
@@ -126,6 +144,8 @@ export interface NotCondition  { type: "not";  condition: Condition; }
 export interface LikeCondition { type: "like"; left: ColumnExpr; pattern: ValueExpr; flags?: string; }
 export interface NotLikeCondition { type: "notLike"; left: ColumnExpr; pattern: ValueExpr; flags?: string; }
 export interface ModCondition { type: "mod"; left: ColumnExpr; divisor: ValueExpr; remainder: ValueExpr; }
+export interface SizeCondition { type: "size"; left: ColumnExpr; count: ValueExpr; }
+export interface TypeCheckCondition { type: "typeCheck"; left: ColumnExpr; bsonType: string; }
 export interface InCondition   { type: "in";   left: ColumnExpr; values: ValueExpr[]; }
 export interface NotInCondition { type: "notIn"; left: ColumnExpr; values: ValueExpr[]; }
 export interface BetweenCondition { type: "between"; left: ColumnExpr; min: ValueExpr; max: ValueExpr; }

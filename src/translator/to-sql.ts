@@ -13,6 +13,7 @@ export function astToSQL(node: ASTNode, dialect: SQLDialect = "sqlite"): SQLResu
     case "update": return translateUpdate(node, ctx);
     case "delete": return translateDelete(node, ctx);
     case "aggregate": return translateAggregate(node, ctx);
+    case "createTable": return translateCreateTable(node, ctx);
     case "raw": return { sql: node.sql, params: node.params ?? [] };
     default: throw new Error(`Unknown AST node: ${(node as ASTNode).type}`);
   }
@@ -86,6 +87,23 @@ function translateDelete(n: import("../ast/ast.ts").DeleteNode, ctx: Ctx): SQLRe
   return { sql, params: ctx.params };
 }
 
+function translateCreateTable(n: import("../ast/ast.ts").CreateTableNode, ctx: Ctx): SQLResult {
+  const ifNotExists = n.ifNotExists ? "IF NOT EXISTS " : "";
+  const colDefs = n.columns.map(col => {
+    let def = `${q(col.name, ctx)} ${col.dataType}`;
+    if (col.primaryKey) def += " PRIMARY KEY";
+    if (col.notNull) def += " NOT NULL";
+    if (col.unique) def += " UNIQUE";
+    if (col.defaultValue !== undefined) {
+      ctx.params.push(col.defaultValue);
+      def += ` DEFAULT ${ph(ctx)}`;
+    }
+    return def;
+  });
+  const sql = `CREATE TABLE ${ifNotExists}${q(n.table, ctx)} (${colDefs.join(", ")})`;
+  return { sql, params: ctx.params };
+}
+
 function translateAggregate(n: import("../ast/ast.ts").AggregateNode, ctx: Ctx): SQLResult {
   const tableName = q(n.table, ctx);
   let selectColumns: string[] = [];
@@ -119,7 +137,14 @@ function translateAggregate(n: import("../ast/ast.ts").AggregateNode, ctx: Ctx):
         }
         break;
       }
-      case "lookup": joinClauses.push(` LEFT JOIN ${q(stage.from, ctx)} ON ${tableName}.${stage.localField} = ${q(stage.from, ctx)}.${stage.foreignField}`); break;
+      case "lookup": {
+        if ("pipeline" in stage && stage.pipeline) {
+          joinClauses.push(` LEFT JOIN ${q(stage.from, ctx)} AS ${q(stage.as, ctx)} ON 1=1`);
+        } else if ("localField" in stage) {
+          joinClauses.push(` LEFT JOIN ${q(stage.from, ctx)} ON ${tableName}.${stage.localField} = ${q(stage.from, ctx)}.${stage.foreignField}`);
+        }
+        break;
+      }
     }
   }
 
@@ -184,6 +209,24 @@ function condSQL(cond: Condition, ctx: Ctx): string {
       pushVal(cond.divisor, ctx);
       pushVal(cond.remainder, ctx);
       return `${colSQL(cond.left, ctx)} % ${ph(ctx)} = ${ph(ctx)}`;
+    case "size": {
+      pushVal(cond.count, ctx);
+      const col = colSQL(cond.left, ctx);
+      if (ctx.dialect === "mysql") return `JSON_LENGTH(${col}) = ${ph(ctx)}`;
+      if (ctx.dialect === "postgresql") return `jsonb_array_length(${col}) = ${ph(ctx)}`;
+      return `json_array_length(${col}) = ${ph(ctx)}`;
+    }
+    case "typeCheck": {
+      const col = colSQL(cond.left, ctx);
+      const typeMap: Record<string, string> = {
+        string: "text", int: "integer", double: "real",
+        bool: "integer", null: "null", array: "text", object: "text",
+      };
+      if (ctx.dialect === "sqlite") {
+        return `TYPEOF(${col}) = '${typeMap[cond.bsonType.toLowerCase()] ?? "text"}'`;
+      }
+      return `1=1`;
+    }
     case "between": pushVal(cond.min, ctx); pushVal(cond.max, ctx); return `${colSQL(cond.left, ctx)} BETWEEN ${ph(ctx)} AND ${ph(ctx)}`;
     case "in": for (const v of cond.values) pushVal(v, ctx); return `${colSQL(cond.left, ctx)} IN (${cond.values.map(() => ph(ctx)).join(", ")})`;
     case "notIn": for (const v of cond.values) pushVal(v, ctx); return `${colSQL(cond.left, ctx)} NOT IN (${cond.values.map(() => ph(ctx)).join(", ")})`;

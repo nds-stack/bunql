@@ -13,6 +13,7 @@ export function astToMongo(node: ASTNode, params: unknown[] = []): MongoCommand 
     case "update": return translateUpdate(node, params);
     case "delete": return translateDelete(node, params);
     case "aggregate": return translateAggregate(node, params);
+    case "createTable": return { collection: node.table, method: "find", args: [{}] };
     case "raw": return { collection: "", method: "find", args: [node.sql] };
     default: throw new Error(`Unsupported AST node for MongoDB: ${(node as ASTNode).type}`);
   }
@@ -34,8 +35,29 @@ function resolveValue(val: ValueExpr, params: unknown[]): unknown {
 
 function translateSelect(n: SelectNode, params: unknown[]): MongoCommand {
   const collection = typeof n.from === "string" ? n.from : n.from.name;
+
+  // Handle subquery: translate to aggregate pipeline
   if (typeof n.from !== "string" && n.from.subquery) {
-    throw new Error("Subqueries in FROM are not supported for MongoDB.");
+    const subquery = n.from.subquery;
+    const pipeline: Record<string, unknown>[] = [];
+
+    if (subquery.where) pipeline.push({ $match: condToMQL(subquery.where, params) });
+
+    if (subquery.columns && !subquery.columns.some(c => c.type === "wildcard")) {
+      const proj: Record<string, number> = {};
+      for (const c of subquery.columns) {
+        if (c.name && c.name !== "*") proj[c.name] = 1;
+      }
+      if (Object.keys(proj).length > 0) pipeline.push({ $project: proj });
+    }
+
+    if (subquery.orderBy) pipeline.push({ $sort: orderByToMQL(subquery.orderBy) });
+    if (subquery.limit !== undefined) pipeline.push({ $limit: subquery.limit });
+    if (subquery.offset !== undefined) pipeline.push({ $skip: subquery.offset });
+
+    if (n.where) pipeline.push({ $match: condToMQL(n.where, params) });
+
+    return { collection: typeof subquery.from === "string" ? subquery.from : subquery.from.name, method: "aggregate", args: [pipeline] };
   }
 
   const hasJoins = n.joins && n.joins.length > 0;
@@ -182,7 +204,26 @@ function translateAggregate(n: import("../ast/ast.ts").AggregateNode, params: un
       case "limit": pipeline.push({ $limit: stage.count }); break;
       case "skip": pipeline.push({ $skip: stage.count }); break;
       case "project": pipeline.push({ $project: stage.fields }); break;
-      case "lookup": pipeline.push({ $lookup: { from: stage.from, localField: stage.localField, foreignField: stage.foreignField, as: stage.as } }); break;
+      case "lookup": {
+        if ("pipeline" in stage && stage.pipeline) {
+          const lookupObj: Record<string, unknown> = {
+            from: stage.from,
+            as: stage.as,
+            pipeline: stage.pipeline.map(s => {
+              if (s.stage === "match") return { $match: condToMQL(s.condition, params) };
+              if (s.stage === "project") return { $project: s.fields };
+              if (s.stage === "limit") return { $limit: s.count };
+              if (s.stage === "sort") return { $sort: orderByObjToMQL(s.fields) };
+              return { $limit: 0 };
+            }),
+          };
+          if (stage.let) lookupObj.let = stage.let;
+          pipeline.push({ $lookup: lookupObj });
+        } else if ("localField" in stage) {
+          pipeline.push({ $lookup: { from: stage.from, localField: stage.localField, foreignField: stage.foreignField, as: stage.as } });
+        }
+        break;
+      }
       case "unwind": {
         if (stage.preserveNullAndEmptyArrays !== undefined || stage.includeArrayIndex !== undefined) {
           const unwindObj: Record<string, unknown> = { path: `$${stage.path}` };
@@ -221,6 +262,18 @@ function condToMQL(cond: Condition, params: unknown[]): Record<string, unknown> 
       return {
         [colName(cond.left)]: { $mod: [resolveValue(cond.divisor, params), resolveValue(cond.remainder, params)] },
       };
+    case "size": {
+      const count = resolveValue(cond.count, params);
+      return { [colName(cond.left)]: { $size: count } };
+    }
+    case "typeCheck": {
+      const typeMap: Record<string, number | string> = {
+        double: 1, string: 2, object: 3, array: 4,
+        bool: 8, date: 9, null: 10, int: 16, long: 18,
+      };
+      const typeCode = typeMap[cond.bsonType.toLowerCase()] ?? cond.bsonType;
+      return { [colName(cond.left)]: { $type: typeCode } };
+    }
     case "between": return { [colName(cond.left)]: { $gte: resolveValue(cond.min, params), $lte: resolveValue(cond.max, params) } };
     case "in": return { [colName(cond.left)]: { $in: cond.values.map(v => resolveValue(v, params)) } };
     case "notIn": return { [colName(cond.left)]: { $nin: cond.values.map(v => resolveValue(v, params)) } };

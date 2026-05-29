@@ -1186,6 +1186,7 @@ try {
 ### Query Engine (MongoDB/Redis/PG/MySQL)
 - **SQL → MongoDB coverage**: Full CRUD, WHERE/JOIN/GROUP BY/ORDER BY/LIMIT. Does NOT cover `$geoNear`, `$text`, `$facet`, `$graphLookup`.
 - **MQL → SQL coverage**: `find`, `aggregate` with `$match`/`$group`/`$sort`/`$limit`/`$lookup`. Does NOT cover `$unwind` (SQLite doesn't have UNNEST), `$sample`, nested sub-document updates.
+- **`$regex` ↔ `LIKE` is best-effort**: MQL `{ field: { $regex: "^abc" } }` translates to SQL `field LIKE '^abc'`. SQL `LIKE` does not interpret regex anchors (`^`, `$`), quantifiers (`*`, `+`), or character classes (`\d`, `\w`). The `i` flag for case-insensitive matching uses `LOWER()` wrappers. For full regex support, use the MongoDB driver directly.
 - **Redis coverage**: Subset only — `HGETALL`, `HSET`, `DEL`, `ZRANGE`. Complex queries (GROUP BY, JOIN) not supported on Redis.
 - **Drivers**: All 4 network drivers (MongoDB, Redis, PostgreSQL, MySQL) are production-ready via `@nds-stack/bunql/driver`. Each uses custom TCP + wire protocol, zero npm dependencies.
 
