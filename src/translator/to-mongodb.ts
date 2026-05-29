@@ -15,6 +15,8 @@ export function astToMongo(node: ASTNode, params: unknown[] = []): MongoCommand 
     case "aggregate": return translateAggregate(node, params);
     case "createTable":
       throw new Error(`MongoDB does not support CREATE TABLE. Collections are created automatically on first insert.`);
+    case "dropTable":
+      throw new Error(`MongoDB does not support DROP TABLE. Use db.collection.drop() directly.`);
     case "setOp":
       throw new Error(`MongoDB does not support ${(node as import("../ast/ast.ts").SetOpNode).op.toUpperCase()} set operations. Use application-level merging instead.`);
     case "raw":

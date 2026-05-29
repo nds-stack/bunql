@@ -179,4 +179,133 @@ describe("SQL Parser", () => {
     const ast = asSelect(parseSQL("SELECT u.id FROM users u"));
     expect(ast.from.alias).toBe("u");
   });
+
+  test("parses HAVING clause", () => {
+    const ast = parseSQL("SELECT status, COUNT(*) FROM orders GROUP BY status HAVING COUNT(*) > 1");
+    if (ast.type !== "select") throw new Error(`Expected select, got ${ast.type}`);
+    expect(ast.having).toBeDefined();
+    expect(ast.having!.type).toBe("gt");
+  });
+
+  test("parses CTE WITH", () => {
+    const ast = parseSQL("WITH cte AS (SELECT * FROM users) SELECT * FROM cte");
+    if (ast.type !== "select") throw new Error(`Expected select, got ${ast.type}`);
+    expect(ast.ctes).toBeDefined();
+    expect(ast.ctes!.length).toBe(1);
+    expect(ast.ctes![0]!.name).toBe("cte");
+  });
+
+  test("parses UNION", () => {
+    const ast = parseSQL("SELECT * FROM a UNION SELECT * FROM b");
+    expect(ast.type).toBe("setOp");
+    if (ast.type === "setOp") {
+      expect(ast.op).toBe("union");
+    }
+  });
+
+  test("parses UNION ALL", () => {
+    const ast = parseSQL("SELECT * FROM a UNION ALL SELECT * FROM b");
+    expect(ast.type).toBe("setOp");
+    if (ast.type === "setOp") {
+      expect(ast.op).toBe("unionAll");
+    }
+  });
+
+  test("parses INTERSECT", () => {
+    const ast = parseSQL("SELECT * FROM a INTERSECT SELECT * FROM b");
+    expect(ast.type).toBe("setOp");
+    if (ast.type === "setOp") {
+      expect(ast.op).toBe("intersect");
+    }
+  });
+
+  test("parses EXCEPT", () => {
+    const ast = parseSQL("SELECT * FROM a EXCEPT SELECT * FROM b");
+    expect(ast.type).toBe("setOp");
+    if (ast.type === "setOp") {
+      expect(ast.op).toBe("except");
+    }
+  });
+
+  test("parses subquery FROM", () => {
+    const ast = parseSQL("SELECT * FROM (SELECT id, name FROM users) AS t");
+    if (ast.type !== "select") throw new Error(`Expected select, got ${ast.type}`);
+    expect(ast.from.subquery).toBeDefined();
+    expect(ast.from.subquery!.type).toBe("select");
+  });
+
+  test("parses INSERT...SELECT", () => {
+    const ast = parseSQL("INSERT INTO archive SELECT * FROM users WHERE active = 0");
+    expect(ast.type).toBe("insert");
+    if (ast.type === "insert") {
+      expect(ast.select).toBeDefined();
+      expect(ast.select.type).toBe("select");
+    }
+  });
+
+  test("parses RETURNING id", () => {
+    const ast = parseSQL("INSERT INTO users (name) VALUES ('Alice') RETURNING id");
+    if (ast.type !== "insert") throw new Error(`Expected insert, got ${ast.type}`);
+    expect(ast.returning).toBeDefined();
+    expect(ast.returning!.length).toBe(1);
+    expect(ast.returning![0]).toBe("id");
+  });
+
+  test("parses RETURNING multiple columns", () => {
+    const ast = parseSQL("INSERT INTO users (name) VALUES ('Bob') RETURNING id, name");
+    if (ast.type !== "insert") throw new Error(`Expected insert, got ${ast.type}`);
+    expect(ast.returning).toBeDefined();
+    expect(ast.returning!.length).toBe(2);
+  });
+
+  test("parses arithmetic expression in SELECT", () => {
+    const ast = asSelect(parseSQL("SELECT price * qty AS total FROM orders"));
+    expect(ast.columns.length).toBe(1);
+  });
+
+  test("parses SELECT with OFFSET only", () => {
+    const ast = asSelect(parseSQL("SELECT * FROM users LIMIT 10 OFFSET 5"));
+    expect(ast.limit).toBe(10);
+    expect(ast.offset).toBe(5);
+  });
+
+  test("parses COUNT(DISTINCT col)", () => {
+    const ast = asSelect(parseSQL("SELECT COUNT(DISTINCT status) FROM orders"));
+    expect(ast.columns.length).toBe(1);
+  });
+
+  test("parses UPDATE with RETURNING", () => {
+    const ast = parseSQL("UPDATE users SET name = 'Alice' WHERE id = 1 RETURNING id, name");
+    if (ast.type !== "update") throw new Error(`Expected update, got ${ast.type}`);
+    expect(ast.returning).toBeDefined();
+    expect(ast.returning!.length).toBe(2);
+  });
+
+  test("parses DELETE with RETURNING", () => {
+    const ast = parseSQL("DELETE FROM users WHERE id = 1 RETURNING id");
+    if (ast.type !== "delete") throw new Error(`Expected delete, got ${ast.type}`);
+    expect(ast.returning).toBeDefined();
+    expect(ast.returning!.length).toBe(1);
+    expect(ast.returning![0]).toBe("id");
+  });
+
+  test("parses DROP TABLE", () => {
+    const ast = parseSQL("DROP TABLE IF EXISTS users");
+    expect(ast.type).toBe("dropTable");
+    if (ast.type === "dropTable") {
+      expect(ast.table).toBe("users");
+      expect(ast.ifExists).toBe(true);
+    }
+  });
+
+  test("parses CREATE TABLE with constraints", () => {
+    const ast = parseSQL("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
+    expect(ast.type).toBe("createTable");
+    if (ast.type === "createTable") {
+      expect(ast.table).toBe("users");
+      expect(ast.columns.length).toBe(2);
+      expect(ast.columns[0]!.primaryKey).toBe(true);
+      expect(ast.columns[1]!.notNull).toBe(true);
+    }
+  });
 });

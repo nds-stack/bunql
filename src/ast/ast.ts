@@ -3,7 +3,7 @@
  * @description Universal AST node types — single IR for all query languages (SQL, MQL, Redis).
  */
 
-export type ASTNode = SelectNode | InsertNode | UpdateNode | DeleteNode | AggregateNode | CreateTableNode | SetOpNode | RawNode;
+export type ASTNode = SelectNode | InsertNode | UpdateNode | DeleteNode | AggregateNode | CreateTableNode | DropTableNode | SetOpNode | RawNode;
 
 export interface SelectNode {
   type: "select";
@@ -60,6 +60,7 @@ export interface DeleteNode {
   type: "delete";
   table: string;
   where?: Condition;
+  returning?: string[];
 }
 
 export interface AggregateNode {
@@ -88,6 +89,12 @@ export interface CreateTableNode {
   table: string;
   columns: ColumnDef[];
   ifNotExists?: boolean;
+}
+
+export interface DropTableNode {
+  type: "dropTable";
+  table: string;
+  ifExists?: boolean;
 }
 
 export type AggregateStage =

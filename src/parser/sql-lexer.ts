@@ -15,11 +15,14 @@ export type TokenType =
 
 const KEYWORDS = new Set([
   "select", "from", "where", "insert", "into", "values", "update", "set", "delete",
-  "create", "table", "drop", "join", "inner", "left", "right", "on", "as",
+  "create", "table", "drop", "join", "inner", "left", "right", "full", "cross", "natural", "on", "as",
   "group", "by", "having", "order", "asc", "desc", "limit", "offset", "distinct",
   "and", "or", "not", "in", "like", "between", "is", "null", "true", "false",
   "count", "sum", "avg", "min", "max",
   "begin", "commit", "rollback", "returning",
+  "with", "union", "intersect", "except", "exists", "all",
+  "primary", "key", "default", "unique", "if",
+  "integer", "text", "varchar", "boolean", "real", "blob",
 ]);
 
 const OPERATORS = new Set(["+", "-", "*", "/", "%", "=", "<>", "!=", "<", ">", "<=", ">=", "||"]);

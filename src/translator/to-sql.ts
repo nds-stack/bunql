@@ -14,6 +14,7 @@ export function astToSQL(node: ASTNode, dialect: SQLDialect = "sqlite"): SQLResu
     case "delete": return translateDelete(node, ctx);
     case "aggregate": return translateAggregate(node, ctx);
     case "createTable": return translateCreateTable(node, ctx);
+    case "dropTable": return translateDropTable(node);
     case "setOp": return translateSetOp(node, ctx);
     case "raw": return { sql: node.sql, params: node.params ?? [] };
     default: throw new Error(`Unknown AST node: ${(node as ASTNode).type}`);
@@ -141,6 +142,11 @@ function translateCreateTable(n: import("../ast/ast.ts").CreateTableNode, ctx: C
   });
   const sql = `CREATE TABLE ${ifNotExists}${q(n.table, ctx)} (${colDefs.join(", ")})`;
   return { sql, params: ctx.params };
+}
+
+function translateDropTable(n: import("../ast/ast.ts").DropTableNode): SQLResult {
+  const ifExists = n.ifExists ? "IF EXISTS " : "";
+  return { sql: `DROP TABLE ${ifExists}${n.table}`, params: [] };
 }
 
 function translateAggregate(n: import("../ast/ast.ts").AggregateNode, ctx: Ctx): SQLResult {

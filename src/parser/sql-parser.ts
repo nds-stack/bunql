@@ -86,8 +86,9 @@ class Parser {
   #parseDropTable(): ASTNode {
     this.#expect("drop");
     this.#expect("table");
+    const ifExists = this.#match("if") && this.#match("exists");
     const table = this.#parseIdentifier();
-    return { type: "raw", sql: `DROP TABLE ${table}`, params: [] };
+    return { type: "dropTable", table, ifExists };
   }
 
   #makeSetOp(op: import("../ast/ast.ts").SetOpNode["op"], left: import("../ast/ast.ts").SelectNode): import("../ast/ast.ts").SetOpNode {
@@ -174,7 +175,11 @@ class Parser {
     this.#expect("from");
     const table = this.#parseIdentifier();
     const where = this.#match("where") ? this.#parseWhere() : undefined;
-    return { type: "delete", table, where };
+    let returning: string[] | undefined;
+    if (this.#match("returning")) {
+      returning = this.#parseColumnList();
+    }
+    return { type: "delete", table, where, returning };
   }
 
   #parseCreateTable(): CreateTableNode {
@@ -286,7 +291,8 @@ class Parser {
     if (this.#current.type === "lparen") {
       this.#advance();
       const subquery = this.#parseSelect();
-      this.#expect("rparen");
+      // consume closing paren — use value check since type narrowing is strict
+      if (this.#current.value === ")") this.#advance();
       let alias: string | undefined;
       if (this.#match("as")) {
         alias = this.#parseIdentifier();

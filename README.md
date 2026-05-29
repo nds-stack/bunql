@@ -13,7 +13,7 @@
 [![Bun](https://img.shields.io/badge/Bun-%3E%3D1.3.0-black?logo=bun)](https://bun.sh)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue?logo=typescript)](https://www.typescriptlang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-345-green)]()
+[![Tests](https://img.shields.io/badge/tests-395-green)]()
 [![Bundle](https://img.shields.io/badge/bundle-111.5KB%20core%20%2F%20133.6KB%20driver-blue)]()
 
 ---
@@ -1292,9 +1292,9 @@ Write operations via the `/run` endpoint are synchronous (direct to `bun:sqlite`
 
 ## Stability
 
-- **v0.3.0-beta.2 (current)** — All 5 backends + bidirectional SQL↔MQL + 28 MQL operators + 9 accumulators + CTE/UNION/DDL + parameterized LIMIT/OFFSET + round-trip wildcard conversion + accurate feature matrix
+- **v0.3.0-beta.3 (current)** — All 5 backends + 395 tests + 50 new tests across parser/translator/MQL operators/accumulators + fixed CTE/UNION/subquery/DROP TABLE/RETURNING parser + clean lint
 - **v0.3.0 (stable)** — Statement format control, transaction modes, pragma helper, serialize, verbose mode
-- **345 tests** — unit, integration, concurrency, stress, FTS5, parser, translators, BSON, RESP, PG wire, MySQL wire, transactions
+- **395 tests** — unit, integration, concurrency, stress, FTS5, parser, translators, BSON, RESP, PG wire, MySQL wire, transactions, MQL operators, accumulators, advanced SQL
 - **5000 sequential writes** — verified stable
 - **Graceful shutdown** — drain queue → finalize statements → close DB
 - **Memory safe** — LRU cache eviction, `yocto-queue` linked-list, no unbounded growth

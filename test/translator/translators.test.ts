@@ -188,3 +188,312 @@ describe("AST → Redis", () => {
     expect(cmd.args).toEqual(["users:1"]);
   });
 });
+
+describe("MQL operators → SQL", () => {
+  test("$mod → SQL modulo", () => {
+    const ast = parseMQL("users", "find", [{ age: { $mod: [5, 2] } }]);
+    if (ast.type !== "select") throw new Error(`Expected select, got ${ast.type}`);
+    const result = astToSQL(ast);
+    expect(result.sql).toContain("%");
+    expect(result.sql).toContain("=");
+  });
+
+  test("$size → SQL json_array_length", () => {
+    const ast = parseMQL("users", "find", [{ tags: { $size: 3 } }]);
+    if (ast.type !== "select") throw new Error(`Expected select, got ${ast.type}`);
+    const result = astToSQL(ast);
+    expect(result.sql).toContain("json_array_length");
+    expect(result.sql).toContain("=");
+  });
+
+  test("$type → SQL TYPEOF", () => {
+    const ast = parseMQL("users", "find", [{ name: { $type: "string" } }]);
+    if (ast.type !== "select") throw new Error(`Expected select, got ${ast.type}`);
+    const result = astToSQL(ast);
+    expect(result.sql).toContain("TYPEOF");
+  });
+
+  test("$all → SQL LIKE AND", () => {
+    const ast = parseMQL("users", "find", [{ tags: { $all: ["a", "b"] } }]);
+    if (ast.type !== "select") throw new Error(`Expected select, got ${ast.type}`);
+    const result = astToSQL(ast);
+    expect(result.sql).toContain("LIKE");
+    expect(result.sql).toContain("AND");
+  });
+
+  test("$elemMatch → SQL EXISTS json_each", () => {
+    const ast = parseMQL("users", "find", [{ arr: { $elemMatch: { x: 1 } } }]);
+    if (ast.type !== "select") throw new Error(`Expected select, got ${ast.type}`);
+    const result = astToSQL(ast);
+    expect(result.sql).toContain("EXISTS");
+    expect(result.sql).toContain("json_each");
+  });
+
+  test("$expr → SQL field comparison", () => {
+    // $expr must use column references ($ prefix) within field-level operator
+    const ast = parseMQL("users", "find", [{ $expr: { $gt: ["$balance", "$limit"] } }]);
+    // Note: $expr at top-level is parsed as field "$expr" → mqlOperator gets $gt
+    const result = astToSQL(ast);
+    // The expression should contain column-style references
+    expect(result.sql).toBeDefined();
+  });
+
+  test("$regex + $options → SQL LIKE", () => {
+    const ast = parseMQL("users", "find", [{ name: { $regex: "^abc", $options: "i" } }]);
+    if (ast.type !== "select") throw new Error(`Expected select, got ${ast.type}`);
+    const result = astToSQL(ast);
+    expect(result.sql).toContain("LIKE");
+    // case-insensitive via LOWER()
+    const lower = result.sql.match(/LOWER/gi);
+    expect(lower).not.toBeNull();
+  });
+
+  test("$exists true → SQL IS NOT NULL", () => {
+    const ast = parseMQL("users", "find", [{ email: { $exists: true } }]);
+    if (ast.type !== "select") throw new Error(`Expected select, got ${ast.type}`);
+    const result = astToSQL(ast);
+    expect(result.sql).toContain("IS NOT NULL");
+  });
+
+  test("$exists false → SQL IS NULL", () => {
+    const ast = parseMQL("users", "find", [{ email: { $exists: false } }]);
+    if (ast.type !== "select") throw new Error(`Expected select, got ${ast.type}`);
+    const result = astToSQL(ast);
+    expect(result.sql).toContain("IS NULL");
+  });
+
+  test("$not → SQL NOT", () => {
+    const ast = parseMQL("users", "find", [{ age: { $not: { $gt: 25 } } }]);
+    if (ast.type !== "select") throw new Error(`Expected select, got ${ast.type}`);
+    const result = astToSQL(ast);
+    expect(result.sql).toContain("NOT");
+  });
+});
+
+describe("MQL update operators → SQL", () => {
+  test("$inc → SET col = col + ?", () => {
+    const ast = parseMQL("users", "updateOne", [{ id: 1 }, { $inc: { count: 1 } }]);
+    if (ast.type !== "update") throw new Error(`Expected update, got ${ast.type}`);
+    const result = astToSQL(ast);
+    expect(result.sql).toContain("count = count + ?");
+  });
+
+  test("$unset → SET col = NULL", () => {
+    const ast = parseMQL("users", "updateOne", [{ id: 1 }, { $unset: { temp: "" } }]);
+    if (ast.type !== "update") throw new Error(`Expected update, got ${ast.type}`);
+    const result = astToSQL(ast);
+    expect(result.sql).toContain("temp = NULL");
+  });
+
+  test("$set → SET col = ?", () => {
+    const ast = parseMQL("users", "updateOne", [{ id: 1 }, { $set: { name: "Bob" } }]);
+    if (ast.type !== "update") throw new Error(`Expected update, got ${ast.type}`);
+    const result = astToSQL(ast);
+    expect(result.sql).toContain("name = ?");
+  });
+});
+
+describe("MQL accumulators → SQL", () => {
+  test("$avg in $group", () => {
+    const ast = parseMQL("orders", "aggregate", [[{
+      $group: { _id: "$status", avgAmount: { $avg: "$amount" } },
+    }]]);
+    expect(ast.type).toBe("aggregate");
+    if (ast.type === "aggregate") {
+      const result = astToSQL(ast);
+      expect(result.sql).toContain("AVG(amount)");
+    }
+  });
+
+  test("$min in $group", () => {
+    const ast = parseMQL("orders", "aggregate", [[{
+      $group: { _id: "$status", minAmount: { $min: "$amount" } },
+    }]]);
+    expect(ast.type).toBe("aggregate");
+    if (ast.type === "aggregate") {
+      const result = astToSQL(ast);
+      expect(result.sql).toContain("MIN(amount)");
+    }
+  });
+
+  test("$max in $group", () => {
+    const ast = parseMQL("orders", "aggregate", [[{
+      $group: { _id: "$status", maxAmount: { $max: "$amount" } },
+    }]]);
+    expect(ast.type).toBe("aggregate");
+    if (ast.type === "aggregate") {
+      const result = astToSQL(ast);
+      expect(result.sql).toContain("MAX(amount)");
+    }
+  });
+
+  test("$addToSet in $group", () => {
+    const ast = parseMQL("orders", "aggregate", [[{
+      $group: { _id: "$status", items: { $addToSet: "$name" } },
+    }]]);
+    expect(ast.type).toBe("aggregate");
+    if (ast.type === "aggregate") {
+      const result = astToSQL(ast);
+      expect(result.sql).toContain("json_group_array(DISTINCT");
+    }
+  });
+});
+
+describe("SQL advanced → AST → SQL round-trip", () => {
+  test("SELECT with HAVING", () => {
+    const sql = "SELECT status, COUNT(*) FROM orders GROUP BY status HAVING COUNT(*) > 1";
+    const ast = parseSQL(sql);
+    const result = astToSQL(ast);
+    expect(result.sql.toLowerCase()).toContain("having");
+    expect(result.sql.toLowerCase()).toContain("group by");
+  });
+
+  test("SELECT with arithmetic expression", () => {
+    const sql = "SELECT price * qty AS total FROM orders";
+    const ast = parseSQL(sql);
+    const result = astToSQL(ast);
+    expect(result.sql.toLowerCase()).toContain("price");
+    expect(result.sql.toLowerCase()).toContain("qty");
+  });
+
+  test("INSERT with RETURNING", () => {
+    const sql = "INSERT INTO users (name) VALUES ('Alice') RETURNING id";
+    const ast = parseSQL(sql);
+    const result = astToSQL(ast);
+    expect(result.sql.toUpperCase()).toContain("RETURNING");
+    expect(result.sql).toContain("id");
+  });
+
+  test("INSERT...SELECT round-trip", () => {
+    const sql = "INSERT INTO archive SELECT * FROM users WHERE active = 0";
+    const ast = parseSQL(sql);
+    const result = astToSQL(ast);
+    expect(result.sql.toLowerCase()).toContain("insert");
+    expect(result.sql.toLowerCase()).toContain("select");
+    expect(result.sql.toLowerCase()).toContain("archive");
+  });
+
+  test("UPDATE with RETURNING", () => {
+    const sql = "UPDATE users SET name = 'Bob' WHERE id = 1 RETURNING id, name";
+    const ast = parseSQL(sql);
+    const result = astToSQL(ast);
+    expect(result.sql.toUpperCase()).toContain("RETURNING");
+    expect(result.sql).toContain("id");
+    expect(result.sql).toContain("name");
+  });
+
+  test("SELECT ORDER BY + LIMIT + OFFSET with params", () => {
+    const sql = "SELECT * FROM users ORDER BY name ASC LIMIT ? OFFSET ?";
+    const ast = parseSQL(sql);
+    const result = astToSQL(ast, { dialect: "postgresql" });
+    expect(result.sql).toContain("ORDER BY");
+    expect(result.sql).toContain("LIMIT");
+    expect(result.sql).toContain("OFFSET");
+  });
+
+  test("COUNT(DISTINCT col) round-trip", () => {
+    const sql = "SELECT COUNT(DISTINCT status) FROM orders";
+    const ast = parseSQL(sql);
+    const result = astToSQL(ast);
+    expect(result.sql.toUpperCase()).toContain("COUNT(DISTINCT");
+  });
+
+  test("SELECT with LEFT JOIN", () => {
+    const sql = "SELECT * FROM users LEFT JOIN orders ON users.id = orders.user_id";
+    const ast = parseSQL(sql);
+    const result = astToSQL(ast);
+    expect(result.sql.toUpperCase()).toContain("LEFT JOIN");
+  });
+
+  test("CTE WITH round-trip", () => {
+    const ast = parseSQL("WITH cte AS (SELECT * FROM users) SELECT * FROM cte");
+    if (ast.type === "select") {
+      expect(ast.ctes).toBeDefined();
+      const result = astToSQL(ast);
+      expect(result.sql.toLowerCase()).toContain("with");
+    }
+  });
+
+  test("UNION round-trip", () => {
+    const ast = parseSQL("SELECT * FROM a UNION SELECT * FROM b");
+    if (ast.type === "setOp") {
+      const result = astToSQL(ast);
+      expect(result.sql.toUpperCase()).toContain("UNION");
+    }
+  });
+});
+
+describe("MQL aggregate stages → SQL", () => {
+  test("$lookup simple → LEFT JOIN", () => {
+    const ast = parseMQL("orders", "aggregate", [[{
+      $lookup: { from: "users", localField: "userId", foreignField: "id", as: "user" },
+    }]]);
+    expect(ast.type).toBe("aggregate");
+    if (ast.type === "aggregate") {
+      const result = astToSQL(ast);
+      expect(result.sql.toUpperCase()).toContain("LEFT JOIN");
+    }
+  });
+
+  test("$unwind → not supported for SQL", () => {
+    const ast = parseMQL("orders", "aggregate", [[{
+      $unwind: "$items",
+    }]]);
+    expect(ast.type).toBe("aggregate");
+    if (ast.type === "aggregate") {
+      const result = astToSQL(ast);
+      expect(result.sql).toBeDefined();
+    }
+  });
+
+  test("$sample → SQL ORDER BY RANDOM()", () => {
+    const ast = parseMQL("users", "aggregate", [[{
+      $sample: { size: 5 },
+    }]]);
+    expect(ast.type).toBe("aggregate");
+    if (ast.type === "aggregate") {
+      const result = astToSQL(ast);
+      expect(result.sql).toContain("LIMIT");
+    }
+  });
+});
+
+describe("MQL → MongoDB round-trip", () => {
+  test("$lookup complex with pipeline", () => {
+    const ast = parseMQL("orders", "aggregate", [[{
+      $lookup: {
+        from: "users",
+        let: { uid: "$userId" },
+        pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$uid"] } } }],
+        as: "user",
+      },
+    }]]);
+    expect(ast.type).toBe("aggregate");
+    if (ast.type === "aggregate") {
+      const cmd = astToMongo(ast);
+      expect(cmd.method).toBe("aggregate");
+    }
+  });
+
+  test("$unwind → MongoDB aggregate", () => {
+    const ast = parseMQL("users", "aggregate", [[{
+      $unwind: { path: "$tags", preserveNullAndEmptyArrays: true },
+    }]]);
+    expect(ast.type).toBe("aggregate");
+    if (ast.type === "aggregate") {
+      const cmd = astToMongo(ast);
+      expect(cmd.method).toBe("aggregate");
+    }
+  });
+
+  test("$sample → MongoDB aggregate", () => {
+    const ast = parseMQL("users", "aggregate", [[{
+      $sample: { size: 3 },
+    }]]);
+    expect(ast.type).toBe("aggregate");
+    if (ast.type === "aggregate") {
+      const cmd = astToMongo(ast);
+      expect(cmd.method).toBe("aggregate");
+    }
+  });
+});

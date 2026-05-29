@@ -1,5 +1,22 @@
 # Changelog
 
+## [v0.3.0-beta.3] — 2026-05-30
+
+### Added
+- **50 new tests** covering 19 previously untested features:
+  - Parser: HAVING, CTE WITH, UNION/INTERSECT/EXCEPT, subquery FROM, INSERT...SELECT, RETURNING (INSERT/UPDATE/DELETE), DROP TABLE, CREATE TABLE constraints, COUNT(DISTINCT), arithmetic expressions
+  - MQL→SQL operators: `$mod`, `$size`, `$type`, `$all`, `$elemMatch`, `$expr`, `$regex`+`$options`, `$exists`, `$not`, `$inc`, `$unset`, `$set`
+  - Accumulators: `$avg`, `$min`, `$max`, `$addToSet`
+  - Aggregate stages: `$lookup` (simple + complex), `$unwind`, `$sample`
+  - SQL round-trip: HAVING, CTE, UNION, arithmetic, INSERT...SELECT, RETURNING, LEFT JOIN
+
+### Fixed
+- Parser: `WITH`, `UNION`, `INTERSECT`, `EXCEPT`, `ALL`, `PRIMARY`, `KEY`, `DEFAULT`, `UNIQUE`, `IF`, `EXISTS` keywords now registered in lexer (code existed but unreachable)
+- Parser: Subquery FROM `(SELECT ...)` uses correct rparen token type check
+- Parser: `#parseDelete()` now supports `RETURNING` clause
+- Parser: `#parseDropTable()` now returns proper `dropTable` AST node instead of raw
+- Lint: 37 ESLint warnings eliminated (unused vars/imports, any types, empty blocks)
+
 ## [v0.3.0-beta.2] — 2026-05-30
 
 ### Fixed
