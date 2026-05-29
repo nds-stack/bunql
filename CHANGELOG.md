@@ -2,27 +2,53 @@
 
 ## [Unreleased]
 
-### Added (v0.8.0 — Transactions + Parameterized Queries)
-- **PG extended query protocol** — Parse/Bind/Describe/Execute/Sync for real parameterized queries (no more string interpolation)
-- **MySQL prepared statements** — COM_STMT_PREPARE + COM_STMT_EXECUTE + COM_STMT_CLOSE
-- **Unified TransactionManager** — works across all 5 backends with nested SAVEPOINT support
-- **TransactionBackend interface** — begin/commit/rollback/savepoint/release/rollbackTo
-- **PG transaction methods** — begin/commit/rollback/savepoint/releaseSavepoint/rollbackTo
-- **MySQL transaction methods** — begin/commit/rollback/savepoint/releaseSavepoint/rollbackTo
-- **Redis MULTI/EXEC/DISCARD** — transaction mode queues commands, exec returns array of results
-- **MongoDB sessions** — startSession/endSession with 16-byte UUID session ID
-- **MongoDB transactions** — startTransaction/commitTransaction/abortTransaction via sessions + lsid
+### Added
+- **Integration tests** — 4 new files covering SQLite/PG/MySQL/MongoDB CRUD via integration (test/integration/)
+- **Redis benchmark** — bench/vs-bun-sql.ts RedisDriver section (skips gracefully if Redis unavailable)
+- **Benchmark SQLite** — separate `:memory:` databases for fair bun:sqlite vs BunQL comparison
+- **SQL → MongoDB: JOIN → $lookup pipeline** — SELECT with JOIN now generates aggregate $lookup
+- **SQL → MongoDB: GROUP BY → aggregate pipeline** — SELECT GROUP BY now generates $group stage
+- **SQL → MongoDB: DISTINCT → $group** — SELECT DISTINCT generates $group with _id for distinct values
+- **SQL → MongoDB: aggregate functions** — COUNT/SUM/AVG/MIN/MAX in SELECT → $group accumulators
+- **SQL → MongoDB: HAVING** — HAVING clause → $match after $group
+- **SQL → MongoDB: updateMany/deleteMany** — SQL UPDATE/DELETE now uses MongoDB updateMany/deleteMany
+- **SQL dialect support** — astToSQL() accepts dialect param: "postgresql" ($1 placeholders), "mysql" (backtick quoting)
+- **Subqueries parser** — `FROM (SELECT ...) AS sub` now parses to TableRef.subquery
+- **Arithmetic expressions** — `a + b`, `price * qty` parsed as binary ColumnExpr in SELECT
+- **MQL parser: missing methods** — findOne, updateMany, deleteMany, replaceOne, findOneAndUpdate, findOneAndDelete
+- **MQL parser: $nor** — `{ $nor: [...] }` operator → AND of NOT conditions
+- **MQL parser: $mod/$all/$size/$type** — additional filter operators (approximate SQL translation)
+- **MQL parser: $regex + $options** — `{ field: { $regex: "pat", $options: "i" } }` support
+- **Feature Support Matrix** — comprehensive README table covering all 5 backends
+- **.gitignore** — test/tmp/ and bench/tmp/ directories
+- **PG auth extraction** — auth logic moved to src/driver/pg/auth.ts (reduces pg/connection.ts by 15%)
 
 ### Changed
-- Tests: 300 (was 294)
-- Driver bundle: 114KB (+13KB for tx + parameterized queries)
-- PGDriver.query/run now use extended query protocol when params provided (security)
-- MySQLDriver.query/run now use prepared statements when params provided (security)
+- **bunql.ts refactor** — split from 984 lines into 9 files (<200 lines each): bunql-core.ts, bunql-state.ts, bunql-init.ts, bunql-query.ts, bunql-tx.ts, bunql-maintenance.ts, bunql-close.ts, statement-wrapper.ts
+- **to-sql.ts aggregate translation** — rewrite to fix $skip/$project silent ignore, adds $lookup→JOIN support
+- **to-mongodb.ts translateSelect** — rewritten to auto-detect when aggregate pipeline is needed
+- **Tests: 345 (was 308)** — +37 integration tests
+- **Bundle: 82.8KB core / 115.5KB driver / 5.2KB server** — slight increase from refactor
+- **BunQL class no longer accepts mongodb:///redis:///postgres:///mysql:// URLs** — throws helpful error directing to driver subpath imports
+- **README cleanup** — removed obsolete "Migrating from v0.1.0-alpha.x" section, fixed incorrect code examples (MongoDB/PG placeholder syntax, Dual API, constructor examples)
 
 ### Fixed
-- MySQL parseColumnDefinition: DataView byteOffset miscalculation — was reading column metadata from wrong buffer position (byteOffset + data.length instead of byteOffset)
+- **PG encodeBind** — invalid result format count (be16(1) without format code → be16(0))
+- **MySQL parsePrepareOK** — format mismatch with MySQL 8.0 OK header + 4B/2B fields
+- **MySQL encodeStmtExecute** — null params skipped TYPE info, now sends type for all params
+- **PG command tag regex** — `match[2]` → `match[1]` after regex change for INSERT/UPDATE/DELETE counts
+- **PG ErrorResponse** — empty message when extended query protocol rejected (encodeBind fixed)
+- **RetryPolicy.execute()** — now wired to batch/exec/transaction/checkpoint/backup/vacuum (was dead code)
+- **RelationsQuery.all()/get()** — removed dead `result` variable that caused double SQL execution
+- **sql-builder.ts/mql-builder.ts** — converted .then() chains to async/await
+- **Dead imports** — removed MySQLConnectionPool/PGConnectionPool/ConnectionPool from connection files
+- **MySQL escapeValue** — added \n, \r, \x1a escape sequences
+- **HTTP handler** — added typeof body.sql !== "string" type guard
+- **Aggregate translation SQL header rebuild bug** — fixed overwrite of WHERE clause when $group after $match
 
-### Added (v0.7.0 — MySQL Driver)
+## [v0.8.0] — 2025-05-20
+
+### Added (v0.8.0 — Transactions + Parameterized Queries)
 - **Custom MySQL wire protocol** — zero npm dependencies, big-endian packet framing:
   - **Packet format** — 3-byte LE length + 1-byte sequence ID + payload
   - **Handshake parsing** — server greeting: protocol version, server version, connection ID, auth-plugin-data, capabilities

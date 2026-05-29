@@ -1068,7 +1068,7 @@ await db.transaction(async (tx) => {
 
 ### Custom Drivers vs Bun.SQL
 
-Benchmark of `@nds-stack/bunql` custom TCP drivers (PG, MySQL, MongoDB) against Bun's native `Bun.SQL` (PG/MySQL only — Bun has no built-in MongoDB driver), plus SQLite facade overhead:
+Benchmark of `@nds-stack/bunql` custom TCP drivers (PG, MySQL, MongoDB, Redis) against Bun's native `Bun.SQL` (PG/MySQL only — Bun has no built-in MongoDB or Redis driver), plus SQLite facade overhead:
 
 **Script:** `bench/vs-bun-sql.ts` — 500 iterations, 100 warmup, separate `:memory:` databases for fair SQLite comparison.
 
@@ -1082,8 +1082,10 @@ Benchmark of `@nds-stack/bunql` custom TCP drivers (PG, MySQL, MongoDB) against 
 | **MySQL** | INSERT (parameterized) | 247K ops/s (Bun.SQL) | 236K ops/s | 1% |
 | **MongoDB** | SELECT | — | 1.46M ops/s | — |
 | **MongoDB** | INSERT | — | 1.30M ops/s | — |
+| **Redis** | SELECT | — | — | — |
+| **Redis** | INSERT | — | — | — |
 
-> SQLite SELECT overhead comes from BunQL's cache lookup + query parsing + row-to-object mapping. SQLite INSERT overhead is negligible because `run()` passes through directly to `bun:sqlite`. PG overhead comes from extended query protocol (Parse+Bind+Describe+Execute+Sync pipeline). MySQL uses simple COM_QUERY with inline params, keeping overhead under 2%. MongoDB has no baseline since Bun has no built-in MongoDB driver.
+> SQLite SELECT overhead comes from BunQL's cache lookup + query parsing + row-to-object mapping. SQLite INSERT overhead is negligible because `run()` passes through directly to `bun:sqlite`. PG overhead comes from extended query protocol (Parse+Bind+Describe+Execute+Sync pipeline). MySQL uses simple COM_QUERY with inline params, keeping overhead under 2%. MongoDB has no baseline since Bun has no built-in MongoDB driver. Redis benchmark was skipped because Redis server was not available on the test machine.
 
 ---
 

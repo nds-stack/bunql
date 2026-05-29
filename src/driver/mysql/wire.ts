@@ -211,46 +211,60 @@ export function encodeStmtPrepare(seq: number, sql: string): Uint8Array {
   return encodePacket(seq, payload);
 }
 
-export function encodeStmtExecute(seq: number, stmtId: number, params: (Uint8Array | null)[]): Uint8Array {
+export function encodeStmtExecute(seq: number, stmtId: number, params: (Uint8Array | null)[], paramTypes?: number[]): Uint8Array {
   const nullBitmapLen = Math.ceil(params.length / 8);
-  // Header: cmd(1) + stmtId(4) + cursor(1) + iter(4) + nullBitmap(N) + flag(1)
   const headerLen = 1 + 4 + 1 + 4 + nullBitmapLen + 1;
-  const valueData: Uint8Array[] = [];
+  const paramData: Uint8Array[] = [];
 
   for (let i = 0; i < params.length; i++) {
     const p = params[i];
+    // Use actual MySQL type if available, otherwise assume VAR_STRING
+    const typeCode = paramTypes && i < paramTypes.length ? paramTypes[i]! : 0x0f;
+    paramData.push(uint16LE(typeCode));
+    paramData.push(uint8(0));
     if (p !== null && p !== undefined) {
-      // Server uses cached param types from PREPARE — send raw value only
-      valueData.push(encodeLenEnc(p.length));
-      valueData.push(p);
+      // For numeric types (MYSQL_TYPE_LONG=3, SHORT=1, TINY=1, FLOAT=4, DOUBLE=5, LONGLONG=8):
+      // send fixed-length format. For string types: length-encoded format.
+      if (typeCode <= 8 && typeCode !== 7 && typeCode !== 6) {
+        // Numeric types: send as fixed-length integer (4 bytes LE for LONG, 8 for LONGLONG)
+        const numVal = parseInt(new TextDecoder().decode(p), 10);
+        if (typeCode === 8) { // MYSQL_TYPE_LONGLONG
+          const buf = new Uint8Array(8);
+          new DataView(buf.buffer).setBigInt64(0, BigInt(numVal), true);
+          paramData.push(buf);
+        } else { // MYSQL_TYPE_LONG, SHORT, TINY, FLOAT, DOUBLE
+          const buf = new Uint8Array(4);
+          new DataView(buf.buffer).setInt32(0, numVal, true);
+          paramData.push(buf);
+        }
+      } else {
+        // String types: length-encoded format
+        paramData.push(encodeLenEnc(p.length));
+        paramData.push(p);
+      }
     }
   }
 
-  const totalLen = headerLen + valueData.reduce((s, c) => s + c.length, 0);
+  const totalLen = headerLen + paramData.reduce((s, c) => s + c.length, 0);
   const payload = new Uint8Array(totalLen);
   let off = 0;
-  payload[off++] = 0x17; // COM_STMT_EXECUTE
+  payload[off++] = 0x17;
   new DataView(payload.buffer).setUint32(off, stmtId, true); off += 4;
-  payload[off++] = 0;    // cursor (0 = no cursor)
-  new DataView(payload.buffer).setUint32(off, 1, true); off += 4; // iteration count
+  payload[off++] = 0;
+  new DataView(payload.buffer).setUint32(off, 1, true); off += 4;
 
-  // Null bitmap
   for (let i = 0; i < nullBitmapLen; i++) {
     let byte = 0;
     for (let b = 0; b < 8; b++) {
       const idx = i * 8 + b;
-      if (idx < params.length && params[idx] === null) {
-        byte |= (1 << b);
-      }
+      if (idx < params.length && params[idx] === null) byte |= (1 << b);
     }
     payload[off++] = byte;
   }
 
-  // Don't send type info — server uses cached types from PREPARE
-  payload[off++] = 0; // new_params_bound_flag = 0 (use cached types)
+  payload[off++] = 1; // new_params_bound_flag = 1 (send types)
 
-  // Value data only (no type info)
-  for (const chunk of valueData) {
+  for (const chunk of paramData) {
     payload.set(chunk, off);
     off += chunk.length;
   }
@@ -271,6 +285,7 @@ export interface PrepareOKPacket {
   columnCount: number;
   paramCount: number;
   warningCount: number;
+  paramTypes: number[]; // MySQL type codes from param definitions
 }
 
 // ─── Response parsing ─────────────────────────────────
@@ -373,7 +388,20 @@ export function parsePrepareOK(first: Uint8Array, packets: Uint8Array[]): Prepar
   off += 1; // filler
   const warningCount = v.getUint16(off, true); off += 2;
 
-  return { type: "prepare_ok", statementId: stmtId, columnCount, paramCount, warningCount };
+  // Extract param types from subsequent packets (param definitions come first, then column definitions)
+  const paramTypes: number[] = [];
+  const packetIdx = 1;
+  for (let i = 0; i < paramCount; i++) {
+    const pkt = packets[packetIdx + i];
+    if (pkt && pkt.length >= 5) {
+      const type = pkt[pkt.length - 6]!;
+      paramTypes.push(type);
+    } else {
+      paramTypes.push(0x0f);
+    }
+  }
+
+  return { type: "prepare_ok", statementId: stmtId, columnCount, paramCount, warningCount, paramTypes };
 }
 
 export class WireError extends Error {
@@ -457,13 +485,13 @@ function parseColumnDefinition(data: Uint8Array): ColumnDefinition {
   const orgTable = readLenEncString(data, off); off += orgTable.bytes;
   const name = readLenEncString(data, off); off += name.bytes;
   const orgName = readLenEncString(data, off); off += orgName.bytes;
-  // Metadata fields are at fixed positions from end of packet
+  // Metadata fields at fixed positions from end of packet
   const len = data.length;
   const charset = (data[len - 12]!) | (data[len - 11]! << 8);
   const columnLength = (data[len - 10]!) | (data[len - 9]! << 8) | (data[len - 8]! << 16) | (data[len - 7]! << 24);
-  const type = data[len - 4]!;
-  const flags = (data[len - 3]!) | (data[len - 2]! << 8);
-  const decimals = data[len - 1]!;
+  const type = data[len - 6]!;
+  const flags = (data[len - 5]!) | (data[len - 4]! << 8);
+  const decimals = data[len - 3]!;
   return { catalog: catalog.value, schema: schema.value, table: table.value, orgTable: orgTable.value, name: name.value, orgName: orgName.value, charset, columnLength, type, flags, decimals };
 }
 
