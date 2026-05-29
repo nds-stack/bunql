@@ -29,7 +29,7 @@ export class MySQLConnection {
   readonly config: MySQLConnectionConfig;
   #socket: SocketHandle | null = null;
   #buffer = new Uint8Array(0);
-  #pendingResolve: ((data: Uint8Array) => void) | null = null;
+  #pendingResolve: (() => void) | null = null;
   #pendingReject: ((err: Error) => void) | null = null;
   #seq = 0;
   #closed = false;
@@ -59,11 +59,10 @@ export class MySQLConnection {
 
     // Receive handshake
     const raw = await this.#readBuffer();
-    const packets = assemblePackets(raw);
+    const { packets } = assemblePackets(raw);
     if (packets.length === 0) throw new MySQLError("No handshake packet");
     const handshake = parseHandshake(packets[0]!);
 
-    // Error during handshake?
     if (handshake.protocolVersion === 0xff) {
       const err = parseResponse(packets);
       if (err.type === "error") throw new MySQLError(err.message, err.code);
@@ -80,22 +79,26 @@ export class MySQLConnection {
 
     // Read auth response
     const authRaw = await this.#readBuffer();
-    const authPackets = assemblePackets(authRaw);
+    const { packets: authPackets } = assemblePackets(authRaw);
     if (authPackets.length === 0) throw new MySQLError("No auth response");
 
     const authResp2 = parseResponse(authPackets);
     if (authResp2.type === "error") {
       throw new MySQLError(authResp2.message, authResp2.code);
     }
+
+    // Drain any remaining handshake packets (ParameterStatus, etc.)
+    if (this.#buffer.length > 0) {
+      this.#buffer = new Uint8Array(0);
+    }
   }
 
   async query(sql: string): Promise<ResponsePacket> {
     if (!this.#socket || this.#closed) throw new Error("Connection closed");
     this.#seq = 0;
-    const queryPacket = encodeQueryPacket(this.#seq++, sql);
-    this.#socket.write(queryPacket);
-    const allData = await this.#readBuffer();
-    const packets = assemblePackets(allData);
+    this.#socket.write(encodeQueryPacket(this.#seq++, sql));
+    const raw = await this.#readBuffer();
+    const { packets } = assemblePackets(raw);
     if (packets.length === 0) throw new MySQLError("Empty response");
     return parseResponse(packets);
   }
@@ -110,18 +113,17 @@ export class MySQLConnection {
   async prepare(sql: string): Promise<PrepareOKPacket> {
     if (!this.#socket || this.#closed) throw new Error("Connection closed");
     this.#seq = 0;
-    const packet = encodeStmtPrepare(this.#seq++, sql);
-    this.#socket.write(packet);
+    this.#socket.write(encodeStmtPrepare(this.#seq++, sql));
 
     const raw = await this.#readBuffer();
-    const packets = assemblePackets(raw);
+    const { packets } = assemblePackets(raw);
     if (packets.length === 0) throw new MySQLError("Empty prepare response");
     const info = parsePrepareOK(packets[0]!, packets);
 
     const totalPackets = 1 + info.columnCount + info.paramCount;
     while (packets.length < totalPackets) {
       const more = await this.#readBuffer();
-      const morePackets = assemblePackets(more);
+      const { packets: morePackets } = assemblePackets(more);
       packets.push(...morePackets);
     }
 
@@ -131,18 +133,16 @@ export class MySQLConnection {
   async executePrepared(stmtId: number, params: (Uint8Array | null)[], paramTypes?: number[]): Promise<ResponsePacket> {
     if (!this.#socket || this.#closed) throw new Error("Connection closed");
     this.#seq = 0;
-    const packet = encodeStmtExecute(this.#seq++, stmtId, params, paramTypes);
-    this.#socket.write(packet);
+    this.#socket.write(encodeStmtExecute(this.#seq++, stmtId, params, paramTypes));
     const raw = await this.#readBuffer();
-    const packets = assemblePackets(raw);
+    const { packets } = assemblePackets(raw);
     if (packets.length === 0) throw new MySQLError("Empty execute response");
-    return parseResponse(packets, true); // COM_STMT_EXECUTE = binary protocol
+    return parseResponse(packets, true);
   }
 
   async closeStmt(stmtId: number): Promise<void> {
     if (!this.#socket) return;
-    const packet = encodeStmtClose(0, stmtId);
-    this.#socket.write(packet);
+    this.#socket.write(encodeStmtClose(0, stmtId));
   }
 
   async close(): Promise<void> {
@@ -159,15 +159,17 @@ export class MySQLConnection {
   }
 
   #onData(data: Uint8Array): void {
+    // Append new data to buffer
+    const newBuf = new Uint8Array(this.#buffer.length + data.length);
+    newBuf.set(this.#buffer);
+    newBuf.set(data, this.#buffer.length);
+    this.#buffer = newBuf;
+
+    // Signal pending reader that data arrived
     if (this.#pendingResolve) {
       const resolve = this.#pendingResolve;
       this.#pendingResolve = null;
-      resolve(data);
-    } else {
-      const newBuf = new Uint8Array(this.#buffer.length + data.length);
-      newBuf.set(this.#buffer);
-      newBuf.set(data, this.#buffer.length);
-      this.#buffer = newBuf;
+      resolve();
     }
   }
 
@@ -191,15 +193,33 @@ export class MySQLConnection {
   }
 
   async #readBuffer(): Promise<Uint8Array> {
-    if (this.#buffer.length > 0) {
-      const data = this.#buffer;
-      this.#buffer = new Uint8Array(0);
-      return data;
+    // Accumulate data until at least one complete packet is available
+    while (true) {
+      const { packets, remaining } = assemblePackets(this.#buffer);
+      if (packets.length > 0) {
+        // Save incomplete data back to buffer, return complete packets
+        this.#buffer = new Uint8Array(remaining);
+        // Reconstruct raw bytes for complete packets (with 4-byte headers)
+        const totalLen = packets.reduce((s, p) => s + 4 + p.length, 0);
+        const result = new Uint8Array(totalLen);
+        let off = 0;
+        for (const p of packets) {
+          const len = p.length;
+          result[off++] = len & 0xff;
+          result[off++] = (len >> 8) & 0xff;
+          result[off++] = (len >> 16) & 0xff;
+          result[off++] = 0; // seq not preserved, but order is
+          result.set(p, off);
+          off += len;
+        }
+        return result;
+      }
+      // No complete packet — wait for more data
+      await new Promise<void>((resolve, reject) => {
+        this.#pendingResolve = resolve;
+        this.#pendingReject = reject;
+      });
     }
-    return new Promise<Uint8Array>((resolve, reject) => {
-      this.#pendingResolve = resolve;
-      this.#pendingReject = reject;
-    });
   }
 }
 

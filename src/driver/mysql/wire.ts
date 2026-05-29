@@ -533,7 +533,7 @@ function parseTextRow(data: Uint8Array, colCount: number): (Uint8Array | null)[]
 
 // ─── Multi-packet assembly ────────────────────────────
 
-export function assemblePackets(data: Uint8Array): Uint8Array[] {
+export function assemblePackets(data: Uint8Array): { packets: Uint8Array[]; remaining: Uint8Array } {
   const packets: Uint8Array[] = [];
   let off = 0;
   while (off < data.length) {
@@ -544,7 +544,7 @@ export function assemblePackets(data: Uint8Array): Uint8Array[] {
     packets.push(payload);
     off += 4 + len;
   }
-  return packets;
+  return { packets, remaining: data.subarray(off) };
 }
 
 // ─── Helpers ───────────────────────────────────────────

@@ -45,7 +45,7 @@ describe("MySQL wire protocol", () => {
     const combined = new Uint8Array(p1.length + p2.length);
     combined.set(p1);
     combined.set(p2, p1.length);
-    const packets = assemblePackets(combined);
+    const { packets } = assemblePackets(combined);
     expect(packets).toHaveLength(2);
     expect(packets[0]).toEqual(new Uint8Array([0x01, 0x02]));
     expect(packets[1]).toEqual(new Uint8Array([0x03]));
