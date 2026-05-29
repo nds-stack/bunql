@@ -109,13 +109,11 @@ export class RelationsQuery<T extends Record<string, unknown>, R extends Relatio
 
   async all(): Promise<RelationsResult<T, R>[]> {
     const executor = this.#parent._executor;
-    const result = await executor.executeSQL(this.#parent.sql, this.#parent.params);
     return fetchMany(executor as never, this.#parent.sql, this.#parent.params, this.#relations) as unknown as RelationsResult<T, R>[];
   }
 
   async get(): Promise<RelationsResult<T, R> | null> {
     const executor = this.#parent._executor;
-    const result = await executor.executeSQL(this.#parent.sql, this.#parent.params);
     return fetchOne(executor as never, this.#parent.sql, this.#parent.params, this.#relations) as unknown as RelationsResult<T, R> | null;
   }
 }
