@@ -25,6 +25,10 @@ export function astToMongo(node: ASTNode): MongoCommand {
 function translateSelect(n: import("../ast/ast.ts").SelectNode): MongoCommand {
   const collection = typeof n.from === "string" ? n.from : n.from.name;
 
+  if (typeof n.from !== "string" && n.from.subquery) {
+    throw new Error("Subqueries in FROM are not supported for MongoDB translation.");
+  }
+
   // If JOINs or GROUP BY present, use aggregate pipeline
   if (n.joins && n.joins.length > 0 || n.groupBy) {
     const pipeline: Record<string, unknown>[] = [];
@@ -219,6 +223,13 @@ function condToMQL(cond: Condition): Record<string, unknown> {
 }
 
 function colName(col: ColumnExpr): string {
+  if (col.type === "binary") return `(${colSQLBin(col)})`;
+  return col.alias ?? col.name ?? "_id";
+}
+
+function colSQLBin(col: ColumnExpr): string {
+  if (col.type === "binary") return `(${colSQLBin(col.left!)} ${col.op} ${colSQLBin(col.right!)})`;
+  if (col.type === "literal") return String(col.value ?? "null");
   return col.alias ?? col.name ?? "_id";
 }
 

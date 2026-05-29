@@ -133,11 +133,17 @@ function colSQL(col: ColumnExpr, ctx: Ctx): string {
     }
     case "literal": return ph(ctx);
     case "function": return `${col.func?.toUpperCase()}(${(col.args ?? []).map(a => colSQL(a, ctx)).join(", ")})`;
+    case "binary": return `(${colSQL(col.left!, ctx)} ${col.op} ${colSQL(col.right!, ctx)})`;
     default: return q(col.name ?? "?", ctx);
   }
 }
 
 function tableSQL(table: TableRef, ctx: Ctx): string {
+  if (table.subquery) {
+    const sub = translateSelect(table.subquery, ctx);
+    const alias = table.alias ? ` AS ${table.alias}` : "";
+    return `(${sub.sql})${alias}`;
+  }
   const name = q(table.name, ctx);
   return table.alias ? `${name} AS ${table.alias}` : name;
 }

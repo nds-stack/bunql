@@ -145,6 +145,15 @@ class Parser {
       }
     }
 
+    // Arithmetic operators: + - * / %
+    const ARITH_OPS = new Set(["+", "-", "*", "/", "%"]);
+    while (this.#current.type === "operator" && ARITH_OPS.has(this.#current.value)) {
+      const op = this.#current.value;
+      this.#advance();
+      const right = this.#parseColumnExpr();
+      expr = { type: "binary", left: expr, op, right };
+    }
+
     if (this.#match("as") || this.#current.type === "identifier") {
       const alias = this.#parseIdentifier();
       expr = { ...expr, alias };
@@ -155,6 +164,21 @@ class Parser {
 
   #parseFrom(): TableRef {
     this.#expect("from");
+
+    // Subquery: FROM (SELECT ...) AS alias
+    if (this.#current.type === "lparen") {
+      this.#advance();
+      const subquery = this.#parseSelect();
+      this.#expect("rparen");
+      let alias: string | undefined;
+      if (this.#match("as")) {
+        alias = this.#parseIdentifier();
+      } else if (this.#current.type === "identifier" as string) {
+        alias = this.#parseIdentifier();
+      }
+      return { name: alias ?? "sub", subquery, alias };
+    }
+
     const name = this.#parseIdentifier();
     const alias = this.#match("as") || this.#current.type === "identifier" ? this.#parseIdentifier() : undefined;
     return { name, alias };
