@@ -110,7 +110,8 @@ export class MongoDriver implements DriverAdapter {
         const docs = args[0] as Record<string, unknown>[];
         return { insert: collection, documents: docs, ordered: true };
       }
-      case "updateOne": {
+      case "updateOne":
+      case "updateMany": {
         const filter = args[0] as Record<string, unknown>;
         const update = args[1] as Record<string, unknown>;
         return { update: collection, updates: [{ q: filter, u: update }], ordered: true };

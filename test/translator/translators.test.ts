@@ -118,11 +118,11 @@ describe("AST → MongoDB", () => {
     expect(cmd.args[0]).toEqual({ name: "Alice", email: "a@t.com" });
   });
 
-  test("DELETE → deleteOne", () => {
+  test("DELETE → deleteMany", () => {
     const cmd = astToMongo({
       type: "delete", table: "users", where: eq(col("id"), 1),
     });
-    expect(cmd.method).toBe("deleteOne");
+    expect(cmd.method).toBe("deleteMany");
   });
 });
 

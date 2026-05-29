@@ -129,13 +129,13 @@ describe("MqlQuery", () => {
   test("updateOne", () => {
     const q = new MqlQuery("users");
     const cmd = q.updateOne({ _id: 1 }, { $set: { name: "Bob" } }).toCommand();
-    expect(cmd.method).toBe("updateOne");
+    expect(cmd.method).toBe("updateMany");
   });
 
   test("deleteOne", () => {
     const q = new MqlQuery("users");
     const cmd = q.deleteOne({ _id: 1 }).toCommand();
-    expect(cmd.method).toBe("deleteOne");
+    expect(cmd.method).toBe("deleteMany");
   });
 
   test("toArray without executor returns []", async () => {

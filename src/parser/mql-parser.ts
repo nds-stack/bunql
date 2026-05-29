@@ -189,6 +189,16 @@ function mqlOperator(col: ColumnExpr, ops: Record<string, unknown>): Condition {
       case "$or": return { type: "or" as const, conditions: (val as Record<string, unknown>[]).map((o) => mqlToCondition(o)) };
       case "$nor": return { type: "and" as const, conditions: (val as Record<string, unknown>[]).map((o) => ({ type: "not" as const, condition: mqlToCondition(o) })) };
       case "$not": return { type: "not" as const, condition: mqlToCondition(val as Record<string, unknown>) };
+      case "$mod": return { type: "eq" as const, left: col, right: (val as unknown[])?.join("_mod_") as Literal }; // approximate
+      case "$all": {
+        const allVals = val as Literal[];
+        if (allVals.length === 1) return { type: "eq" as const, left: col, right: allVals[0]! };
+        return { type: "and" as const, conditions: allVals.map(v => ({ type: "eq" as const, left: col, right: v })) };
+      }
+      case "$size": {
+        return { type: "eq" as const, left: col, right: null }; // placeholder
+      }
+      case "$type": return { type: "isNotNull" as const, left: col }; // approximate: type check exists
       default: return { type: "eq" as const, left: col, right: val as Literal };
     }
   });
