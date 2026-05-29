@@ -14,6 +14,8 @@ export function astToMongo(node: ASTNode, params: unknown[] = []): MongoCommand 
     case "delete": return translateDelete(node, params);
     case "aggregate": return translateAggregate(node, params);
     case "createTable": return { collection: node.table, method: "find", args: [{}] };
+    case "setOp":
+      throw new Error(`MongoDB does not support ${(node as import("../ast/ast.ts").SetOpNode).op.toUpperCase()} set operations. Use application-level merging instead.`);
     case "raw": return { collection: "", method: "find", args: [node.sql] };
     default: throw new Error(`Unsupported AST node for MongoDB: ${(node as ASTNode).type}`);
   }
@@ -35,6 +37,14 @@ function resolveValue(val: ValueExpr, params: unknown[]): unknown {
 
 function translateSelect(n: SelectNode, params: unknown[]): MongoCommand {
   const collection = typeof n.from === "string" ? n.from : n.from.name;
+
+  // Inline CTEs for MongoDB
+  if (n.ctes && n.ctes.length > 0) {
+    const cteMap = new Map(n.ctes.map(c => [c.name, c.query]));
+    if (typeof n.from !== "string" && n.from.name && cteMap.has(n.from.name)) {
+      return translateSelect(cteMap.get(n.from.name)!, params);
+    }
+  }
 
   // Handle subquery: translate to aggregate pipeline
   if (typeof n.from !== "string" && n.from.subquery) {
@@ -150,6 +160,13 @@ function translateSelect(n: SelectNode, params: unknown[]): MongoCommand {
 function translateInsert(n: InsertNode, params: unknown[]): MongoCommand {
   const cols = n.columns;
   const resolve = (v: ValueExpr) => resolveValue(v, params);
+
+  // Handle INSERT...SELECT: execute SELECT first, then insert results
+  if (n.select) {
+    const selectCmd = translateSelect(n.select, params);
+    return { collection: n.table, method: "aggregate", args: [selectCmd.args[0]] };
+  }
+
   if (n.values.length === 1 && cols) {
     const doc: Record<string, unknown> = {};
     for (let i = 0; i < cols.length; i++) doc[cols[i]!] = resolve(n.values[0]![i]!);
@@ -179,7 +196,17 @@ function translateUpdate(n: UpdateNode, params: unknown[]): MongoCommand {
       set[k] = v;
     }
   }
-  return { collection: n.table, method: "updateMany", args: [filter, { $set: set }] };
+
+  const updateDoc: Record<string, unknown> = { $set: set };
+  if (n.updateOps) {
+    for (const op of n.updateOps) {
+      const opKey = `$${op.op}`;
+      if (!updateDoc[opKey]) updateDoc[opKey] = {};
+      (updateDoc[opKey] as Record<string, unknown>)[op.field] = resolveValue(op.value, params);
+    }
+  }
+
+  return { collection: n.table, method: "updateMany", args: [filter, updateDoc] };
 }
 
 function translateDelete(n: DeleteNode, params: unknown[]): MongoCommand {
@@ -203,7 +230,7 @@ function translateAggregate(n: import("../ast/ast.ts").AggregateNode, params: un
       case "sort": pipeline.push({ $sort: orderByObjToMQL(stage.fields) }); break;
       case "limit": pipeline.push({ $limit: stage.count }); break;
       case "skip": pipeline.push({ $skip: stage.count }); break;
-      case "project": pipeline.push({ $project: stage.fields }); break;
+      case "project": pipeline.push({ $project: stage.fields as Record<string, unknown> }); break;
       case "lookup": {
         if ("pipeline" in stage && stage.pipeline) {
           const lookupObj: Record<string, unknown> = {
@@ -273,6 +300,15 @@ function condToMQL(cond: Condition, params: unknown[]): Record<string, unknown> 
       };
       const typeCode = typeMap[cond.bsonType.toLowerCase()] ?? cond.bsonType;
       return { [colName(cond.left)]: { $type: typeCode } };
+    }
+    case "elemMatch":
+      return { [colName(cond.left)]: { $elemMatch: condToMQL(cond.condition, params) } };
+    case "expr": {
+      const opMap: Record<string, string> = { gt: "$gt", lt: "$lt", gte: "$gte", lte: "$lte", eq: "$eq", neq: "$ne" };
+      const mqlOp = opMap[cond.op] ?? "$eq";
+      const left = cond.left.type === "column" ? `$${cond.left.name}` : cond.left.value;
+      const right = cond.right.type === "column" ? `$${cond.right.name}` : cond.right.value;
+      return { $expr: { [mqlOp]: [left, right] } };
     }
     case "between": return { [colName(cond.left)]: { $gte: resolveValue(cond.min, params), $lte: resolveValue(cond.max, params) } };
     case "in": return { [colName(cond.left)]: { $in: cond.values.map(v => resolveValue(v, params)) } };

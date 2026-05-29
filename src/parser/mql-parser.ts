@@ -2,7 +2,7 @@
  * @module mql-parser
  * @description MongoDB Query Language parser — MQL object → Universal AST.
  */
-import type { ASTNode, AggregateStage, ColumnExpr, Condition, Literal } from "../ast/ast.ts";
+import type { ASTNode, AggregateStage, ColumnExpr, Condition, Literal, ComputedExpr } from "../ast/ast.ts";
 
 export function parseMQL(collection: string, method: string, args: unknown[]): ASTNode {
   switch (method) {
@@ -69,7 +69,20 @@ function parseAggregate(collection: string, pipeline: Record<string, unknown>[])
       case "$sort": return { stage: "sort", fields: parseSortObj(value as Record<string, number>) };
       case "$limit": return { stage: "limit", count: value as number };
       case "$skip": return { stage: "skip", count: value as number };
-      case "$project": return { stage: "project", fields: value as Record<string, number | string | boolean> };
+      case "$project": {
+        const fields: Record<string, number | string | boolean | ComputedExpr> = {};
+        for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+          if (typeof v === "object" && v !== null && !Array.isArray(v)) {
+            const firstKey = Object.keys(v)[0];
+            if (firstKey?.startsWith("$")) {
+              fields[k] = v as ComputedExpr;
+              continue;
+            }
+          }
+          fields[k] = v as number | string | boolean;
+        }
+        return { stage: "project", fields };
+      }
       case "$lookup": return parseLookupStage(value as Record<string, string>);
       case "$unwind": {
         if (typeof value === "string") {
@@ -109,9 +122,24 @@ function parseInsertMany(collection: string, docs: Record<string, Literal>[]): A
 }
 
 function parseUpdate(collection: string, filter: Record<string, unknown>, update: Record<string, unknown>): ASTNode {
-  const set = (update.$set ?? update) as Record<string, Literal>;
+  const set: Record<string, Literal> = {};
+  const updateOps: import("../ast/ast.ts").UpdateNode["updateOps"] = [];
+
+  for (const [op, val] of Object.entries(update)) {
+    if (op === "$set") {
+      Object.assign(set, val as Record<string, Literal>);
+    } else if (["$inc", "$unset", "$push", "$pull"].includes(op)) {
+      const shortOp = op.slice(1) as "inc" | "unset" | "push" | "pull";
+      for (const [field, value] of Object.entries(val as Record<string, unknown>)) {
+        updateOps.push({ op: shortOp, field, value: value as import("../ast/ast.ts").ValueExpr });
+      }
+    } else {
+      set[op] = val as Literal;
+    }
+  }
+
   const where = mqlToCondition(filter);
-  return { type: "update", table: collection, set, where };
+  return { type: "update", table: collection, set, updateOps: updateOps.length > 0 ? updateOps : undefined, where };
 }
 
 function parseDelete(collection: string, filter: Record<string, unknown>): ASTNode {
@@ -120,7 +148,7 @@ function parseDelete(collection: string, filter: Record<string, unknown>): ASTNo
 
 function parseGroupStage(value: Record<string, unknown>): AggregateStage {
   const id = (value._id ?? null) as Record<string, string | null> | null;
-  const acc: Record<string, { func: "sum" | "avg" | "min" | "max" | "count" | "push"; field: string }> = {};
+  const acc: Record<string, { func: "sum" | "avg" | "min" | "max" | "count" | "push" | "addToSet" | "first" | "last"; field: string }> = {};
   for (const [k, v] of Object.entries(value)) {
     if (k === "_id") continue;
     const expr = v as Record<string, unknown>;
@@ -128,8 +156,8 @@ function parseGroupStage(value: Record<string, unknown>): AggregateStage {
     const func = String(funcKeys[0] ?? "count").replace(/^\$/, "");
     const rawField = typeof expr[funcKeys[0]!] === "string" ? String(expr[funcKeys[0]!]) : "$ROOT";
     const field = rawField.replace(/^\$/, "");
-    const validFuncs = ["sum", "avg", "min", "max", "count", "push"];
-    acc[k] = { func: (validFuncs.includes(func) ? func : "count") as "sum" | "avg" | "min" | "max" | "count" | "push", field };
+    const validFuncs = ["sum", "avg", "min", "max", "count", "push", "addToSet", "first", "last"];
+    acc[k] = { func: (validFuncs.includes(func) ? func : "count") as "sum" | "avg" | "min" | "max" | "count" | "push" | "addToSet" | "first" | "last", field };
   }
   return { stage: "group", id: id ?? {}, accumulators: acc };
 }
@@ -234,10 +262,29 @@ function mqlOperator(col: ColumnExpr, ops: Record<string, unknown>): Condition {
         }
         return { type: "eq" as const, left: col, right: null };
       }
+      case "$elemMatch": {
+        const filter = val as Record<string, unknown>;
+        return { type: "elemMatch" as const, left: col, condition: mqlToCondition(filter) };
+      }
       case "$all": {
         const allVals = val as Literal[];
         if (allVals.length === 1) return { type: "eq" as const, left: col, right: allVals[0]! };
         return { type: "and" as const, conditions: allVals.map(v => ({ type: "eq" as const, left: col, right: v })) };
+      }
+      case "$expr": {
+        const expr = val as Record<string, unknown[]>;
+        const opKey = Object.keys(expr)[0] ?? "$eq";
+        const args = expr[opKey] as unknown[];
+        const leftArg = args?.[0];
+        const rightArg = args?.[1];
+        const leftCol: ColumnExpr = typeof leftArg === "string" && leftArg.startsWith("$")
+          ? { type: "column", name: (leftArg as string).slice(1) }
+          : { type: "literal", value: leftArg as Literal };
+        const rightCol: ColumnExpr = typeof rightArg === "string" && rightArg.startsWith("$")
+          ? { type: "column", name: (rightArg as string).slice(1) }
+          : { type: "literal", value: rightArg as Literal };
+        const opMap: Record<string, string> = { $gt: "gt", $lt: "lt", $gte: "gte", $lte: "lte", $eq: "eq", $ne: "neq" };
+        return { type: "expr" as const, left: leftCol, op: opMap[opKey] ?? "eq", right: rightCol };
       }
       case "$size": {
         const count = val as Literal;

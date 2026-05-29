@@ -28,8 +28,46 @@ class Parser {
     this.#paramIndex = 0;
     const kw = this.#current.value;
 
+    // Check for WITH clause (CTE) before any statement
+    let ctes: import("../ast/ast.ts").SelectNode["ctes"];
+    if (kw === "with") {
+      this.#advance();
+      ctes = [];
+      do {
+        if (this.#current.value === ",") this.#advance();
+        const name = this.#parseIdentifier();
+        let columns: string[] | undefined;
+        if (this.#match("(")) {
+          columns = this.#parseColumnList();
+          this.#expect(")");
+        }
+        this.#expect("as");
+        this.#expect("(");
+        const query = this.#parseSelect();
+        this.#expect(")");
+        ctes.push({ name, columns, query });
+      } while (this.#current.value === ",");
+
+      // After CTE, expect a SELECT
+      const selectNode = this.#parseSelect();
+      selectNode.ctes = ctes;
+      return selectNode;
+    }
+
     switch (kw) {
-      case "select": return this.#parseSelect();
+      case "select": {
+        const left = this.#parseSelect();
+
+        // Check for set operations: UNION, INTERSECT, EXCEPT
+        if (this.#match("union") || this.#current.value === "union") {
+          if (this.#match("all")) return this.#makeSetOp("unionAll", left);
+          return this.#makeSetOp("union", left);
+        }
+        if (this.#match("intersect")) return this.#makeSetOp("intersect", left);
+        if (this.#match("except")) return this.#makeSetOp("except", left);
+
+        return left;
+      }
       case "insert": return this.#parseInsert();
       case "update": return this.#parseUpdate();
       case "delete": return this.#parseDelete();
@@ -37,6 +75,11 @@ class Parser {
       default:
         throw new ParseError(`Unexpected keyword: ${kw}`, this.#current.pos);
     }
+  }
+
+  #makeSetOp(op: import("../ast/ast.ts").SetOpNode["op"], left: import("../ast/ast.ts").SelectNode): import("../ast/ast.ts").SetOpNode {
+    const right = this.#parseSelect();
+    return { type: "setOp", op, left, right };
   }
 
   #parseSelect(): SelectNode {
@@ -63,6 +106,13 @@ class Parser {
     this.#expect("into");
     const table = this.#parseIdentifier();
     const columns = this.#match("(") ? (() => { const cols = this.#parseColumnList(); this.#expect(")"); return cols; })() : undefined;
+
+    // Check for INSERT...SELECT variant
+    if (this.#current.value === "select") {
+      const select = this.#parseSelect();
+      return { type: "insert", table, columns, select, values: [], returning: undefined };
+    }
+
     this.#expect("values");
 
     const values: ValueExpr[][] = [];
@@ -83,7 +133,7 @@ class Parser {
       returning = this.#parseColumnList();
     }
 
-    return { type: "insert", table, columns, values, returning };
+    return { type: "insert", table, columns, values, select: undefined, returning };
   }
 
   #parseUpdate(): ASTNode {

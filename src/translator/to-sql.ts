@@ -14,6 +14,7 @@ export function astToSQL(node: ASTNode, dialect: SQLDialect = "sqlite"): SQLResu
     case "delete": return translateDelete(node, ctx);
     case "aggregate": return translateAggregate(node, ctx);
     case "createTable": return translateCreateTable(node, ctx);
+    case "setOp": return translateSetOp(node, ctx);
     case "raw": return { sql: node.sql, params: node.params ?? [] };
     default: throw new Error(`Unknown AST node: ${(node as ASTNode).type}`);
   }
@@ -35,6 +36,16 @@ function pushVal(val: ValueExpr, ctx: Ctx): void {
 
 function translateSelect(n: import("../ast/ast.ts").SelectNode, ctx: Ctx): SQLResult {
   let sql = "SELECT ";
+
+  // Handle CTEs
+  if (n.ctes && n.ctes.length > 0) {
+    const cteStrs = n.ctes.map(cte => {
+      const sub = translateSelect(cte.query, ctx);
+      return `${q(cte.name, ctx)} AS (${sub.sql})`;
+    });
+    sql = `WITH ${cteStrs.join(", ")} ` + sql;
+  }
+
   if (n.distinct) sql += "DISTINCT ";
   sql += n.columns.map((c) => colSQL(c, ctx)).join(", ");
   sql += " FROM " + tableSQL(n.from, ctx);
@@ -52,11 +63,20 @@ function translateSelect(n: import("../ast/ast.ts").SelectNode, ctx: Ctx): SQLRe
 function translateInsert(n: import("../ast/ast.ts").InsertNode, ctx: Ctx): SQLResult {
   const cols = n.columns ?? [];
   const colStr = cols.length > 0 ? ` (${cols.map(c => q(c, ctx)).join(", ")})` : "";
-  const valueRows = n.values.map((row) => {
-    for (const v of row) pushVal(v, ctx);
-    return `(${row.map(() => ph(ctx)).join(", ")})`;
-  }).join(", ");
-  let sql = `INSERT INTO ${q(n.table, ctx)}${colStr} VALUES ${valueRows}`;
+
+  let sql: string;
+  if (n.select) {
+    const selectSql = translateSelect(n.select, ctx);
+    ctx.params.push(...selectSql.params);
+    sql = `INSERT INTO ${q(n.table, ctx)}${colStr} ${selectSql.sql}`;
+  } else {
+    const valueRows = n.values.map((row) => {
+      for (const v of row) pushVal(v, ctx);
+      return `(${row.map(() => ph(ctx)).join(", ")})`;
+    }).join(", ");
+    sql = `INSERT INTO ${q(n.table, ctx)}${colStr} VALUES ${valueRows}`;
+  }
+
   if (n.returning) sql += ` RETURNING ${n.returning.join(", ")}`;
   return { sql, params: ctx.params };
 }
@@ -75,6 +95,25 @@ function translateUpdate(n: import("../ast/ast.ts").UpdateNode, ctx: Ctx): SQLRe
     ctx.params.push(v);
     return `${q(k, ctx)} = ${ph(ctx)}`;
   });
+
+  // Handle updateOps ($inc, $unset, $push, $pull)
+  if (n.updateOps) {
+    for (const op of n.updateOps) {
+      switch (op.op) {
+        case "inc":
+          pushVal(op.value, ctx);
+          setClauses.push(`${q(op.field, ctx)} = ${q(op.field, ctx)} + ${ph(ctx)}`);
+          break;
+        case "unset":
+          setClauses.push(`${q(op.field, ctx)} = NULL`);
+          break;
+        default:
+          setClauses.push(`${q(op.field, ctx)} = ${ph(ctx)}`);
+          pushVal(op.value, ctx);
+      }
+    }
+  }
+
   let sql = `UPDATE ${q(n.table, ctx)} SET ${setClauses.join(", ")}`;
   if (n.where) sql += " WHERE " + condSQL(n.where, ctx);
   if (n.returning) sql += ` RETURNING ${n.returning.join(", ")}`;
@@ -121,7 +160,17 @@ function translateAggregate(n: import("../ast/ast.ts").AggregateNode, ctx: Ctx):
       case "group": {
         hasGroup = true;
         const idParts = Object.entries(stage.id).map(([k, v]) => v ? `${v} AS ${k}` : `'${k}' AS ${k}`);
-        const accParts = Object.entries(stage.accumulators).map(([k, a]) => `${a.func.toUpperCase()}(${a.field}) AS ${k}`);
+        const accParts = Object.entries(stage.accumulators).map(([k, a]) => {
+          if (a.func === "addToSet") {
+            return ctx.dialect === "mysql"
+              ? `GROUP_CONCAT(DISTINCT ${a.field}) AS ${k}`
+              : `json_group_array(DISTINCT ${a.field}) AS ${k}`;
+          }
+          if (a.func === "first" || a.func === "last") {
+            return `${a.field} AS ${k}`;
+          }
+          return `${a.func.toUpperCase()}(${a.field}) AS ${k}`;
+        });
         selectColumns = [...idParts, ...accParts];
         if (stage.id && Object.keys(stage.id).length > 0) {
           groupByColumns = Object.entries(stage.id).map(([, v]) => v ?? "").filter(Boolean);
@@ -133,7 +182,22 @@ function translateAggregate(n: import("../ast/ast.ts").AggregateNode, ctx: Ctx):
       case "skip": offsetVal = stage.count; break;
       case "project": {
         if (!hasGroup) {
-          selectColumns = Object.entries(stage.fields).filter(([, v]) => v !== 0 && v !== false).map(([k]) => k);
+          selectColumns = Object.entries(stage.fields).filter(([, v]) => v !== 0 && v !== false).map(([k, v]) => {
+            if (typeof v === "object" && v !== null && "$concat" in v) {
+              const args = ((v as Record<string, unknown>).$concat as (string | Record<string, unknown>)[] ?? []).map(arg =>
+                typeof arg === "string" && arg.startsWith("$") ? colSQL({ type: "column", name: (arg as string).slice(1) }, ctx) : `'${arg}'`
+              );
+              return `CONCAT(${args.join(", ")}) AS ${q(k, ctx)}`;
+            }
+            if (typeof v === "object" && v !== null && "$add" in v) {
+              const args = ((v as Record<string, unknown>).$add as (string | Record<string, unknown>)[] ?? []).map(arg =>
+                typeof arg === "string" && arg.startsWith("$") ? colSQL({ type: "column", name: (arg as string).slice(1) }, ctx) : String(arg)
+              );
+              return `(${args.join(" + ")}) AS ${q(k, ctx)}`;
+            }
+            const name = typeof k === "string" ? k : String(k);
+            return `${q(name, ctx)}`;
+          });
         }
         break;
       }
@@ -209,6 +273,16 @@ function condSQL(cond: Condition, ctx: Ctx): string {
       pushVal(cond.divisor, ctx);
       pushVal(cond.remainder, ctx);
       return `${colSQL(cond.left, ctx)} % ${ph(ctx)} = ${ph(ctx)}`;
+    case "elemMatch": {
+      const col = colSQL(cond.left, ctx);
+      const subCond = condSQL(cond.condition, ctx);
+      return `EXISTS (SELECT 1 FROM json_each(${col}) WHERE ${subCond})`;
+    }
+    case "expr": {
+      const left = colSQL(cond.left, ctx);
+      const right = colSQL(cond.right, ctx);
+      return `${left} ${cond.op.toUpperCase()} ${right}`;
+    }
     case "size": {
       pushVal(cond.count, ctx);
       const col = colSQL(cond.left, ctx);
@@ -237,4 +311,16 @@ function condSQL(cond: Condition, ctx: Ctx): string {
     case "not": return `NOT (${condSQL(cond.condition, ctx)})`;
     default: return "1=1";
   }
+}
+
+function translateSetOp(node: import("../ast/ast.ts").SetOpNode, ctx: Ctx): SQLResult {
+  const left = translateSelect(node.left, ctx);
+  const right = translateSelect(node.right, ctx);
+  ctx.params.push(...right.params);
+
+  const opMap: Record<string, string> = {
+    union: "UNION", unionAll: "UNION ALL", intersect: "INTERSECT", except: "EXCEPT"
+  };
+  const sql = `${left.sql} ${opMap[node.op]} ${right.sql}`;
+  return { sql, params: ctx.params };
 }

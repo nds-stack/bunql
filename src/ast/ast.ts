@@ -3,12 +3,13 @@
  * @description Universal AST node types — single IR for all query languages (SQL, MQL, Redis).
  */
 
-export type ASTNode = SelectNode | InsertNode | UpdateNode | DeleteNode | AggregateNode | CreateTableNode | RawNode;
+export type ASTNode = SelectNode | InsertNode | UpdateNode | DeleteNode | AggregateNode | CreateTableNode | SetOpNode | RawNode;
 
 export interface SelectNode {
   type: "select";
   columns: ColumnExpr[];
   from: TableRef;
+  ctes?: { name: string; columns?: string[]; query: SelectNode }[];
   joins?: JoinNode[];
   where?: Condition;
   groupBy?: ColumnExpr[];
@@ -26,11 +27,19 @@ export interface ParamRef {
 
 export type ValueExpr = Literal | ParamRef;
 
+export interface SetOpNode {
+  type: "setOp";
+  op: "union" | "unionAll" | "intersect" | "except";
+  left: SelectNode;
+  right: SelectNode;
+}
+
 export interface InsertNode {
   type: "insert";
   table: string;
   columns?: string[];
   values: ValueExpr[][];
+  select?: SelectNode;
   returning?: string[];
 }
 
@@ -38,6 +47,11 @@ export interface UpdateNode {
   type: "update";
   table: string;
   set: Record<string, ValueExpr | ColumnExpr>;
+  updateOps?: {
+    op: "inc" | "unset" | "push" | "pull" | "set";
+    field: string;
+    value: ValueExpr;
+  }[];
   where?: Condition;
   returning?: string[];
 }
@@ -82,12 +96,20 @@ export type AggregateStage =
   | { stage: "sort"; fields: OrderByNode[] }
   | { stage: "limit"; count: number }
   | { stage: "skip"; count: number }
-  | { stage: "project"; fields: Record<string, number | string | boolean> }
+  | { stage: "project"; fields: Record<string, number | string | boolean | ComputedExpr> }
   | { stage: "lookup"; from: string; localField: string; foreignField: string; as: string }
   | { stage: "lookup"; from: string; let?: Record<string, string>; pipeline: AggregateStage[]; as: string }
   | { stage: "unwind"; path: string; preserveNullAndEmptyArrays?: boolean; includeArrayIndex?: string };
 
-export type Accumulator = { func: "sum" | "avg" | "min" | "max" | "count" | "push"; field: string };
+export type ComputedExpr = {
+  $concat?: (string | ColumnExpr)[];
+  $add?: (string | ColumnExpr)[];
+  $substr?: [string | ColumnExpr, number, number];
+  $toUpper?: string | ColumnExpr;
+  $cond?: { if: Condition; then: ValueExpr; else: ValueExpr };
+};
+
+export type Accumulator = { func: "sum" | "avg" | "min" | "max" | "count" | "push" | "addToSet" | "first" | "last"; field: string };
 
 export interface ColumnExpr {
   type: "column" | "alias" | "wildcard" | "literal" | "function" | "binary";
@@ -127,6 +149,7 @@ export type Condition =
   | AndCondition | OrCondition | NotCondition
   | LikeCondition | NotLikeCondition
   | ModCondition
+  | ElemMatchCondition | ExprCondition
   | SizeCondition | TypeCheckCondition
   | InCondition | NotInCondition
   | BetweenCondition
@@ -144,6 +167,8 @@ export interface NotCondition  { type: "not";  condition: Condition; }
 export interface LikeCondition { type: "like"; left: ColumnExpr; pattern: ValueExpr; flags?: string; }
 export interface NotLikeCondition { type: "notLike"; left: ColumnExpr; pattern: ValueExpr; flags?: string; }
 export interface ModCondition { type: "mod"; left: ColumnExpr; divisor: ValueExpr; remainder: ValueExpr; }
+export interface ElemMatchCondition { type: "elemMatch"; left: ColumnExpr; condition: Condition; }
+export interface ExprCondition { type: "expr"; left: ColumnExpr; op: string; right: ColumnExpr; }
 export interface SizeCondition { type: "size"; left: ColumnExpr; count: ValueExpr; }
 export interface TypeCheckCondition { type: "typeCheck"; left: ColumnExpr; bsonType: string; }
 export interface InCondition   { type: "in";   left: ColumnExpr; values: ValueExpr[]; }
