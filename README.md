@@ -7,7 +7,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue?logo=typescript)](https://www.typescriptlang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-345-green)]()
-[![Bundle](https://img.shields.io/badge/bundle-83.1KB%20core%20%2F%20114.7KB%20driver-blue)]()
+[![Bundle](https://img.shields.io/badge/bundle-82.8KB%20core%20%2F%20115.5KB%20driver-blue)]()
 
 ---
 
@@ -1281,7 +1281,7 @@ Write operations via the `/run` endpoint are synchronous (direct to `bun:sqlite`
 - **Hand-written parsers** — SQL parser (recursive descent), MQL parser (object traversal), all wire protocols
 - **Observability** — built-in metrics counters, cache stats, WAL monitoring, slow query detection, verbose tracing
 - **Audit score** — 100/100 (zero BLOCKING issues)
-- **Bundle** — 83.1KB core, 5.1KB server, 114.7KB driver (MongoDB + Redis + PG + MySQL)
+- **Bundle** — 82.8KB core, 5.2KB server, 115.5KB driver (MongoDB + Redis + PG + MySQL)
 
 ---
 

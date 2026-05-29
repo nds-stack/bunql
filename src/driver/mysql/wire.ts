@@ -212,24 +212,21 @@ export function encodeStmtPrepare(seq: number, sql: string): Uint8Array {
 }
 
 export function encodeStmtExecute(seq: number, stmtId: number, params: (Uint8Array | null)[]): Uint8Array {
-  // Header: 1 (cmd) + 4 (stmtId) + 1 (cursor) + 4 (iter) = 10 bytes
-  // Null bitmap: ceil(numParams/8) bytes
   const nullBitmapLen = Math.ceil(params.length / 8);
+  // Header: cmd(1) + stmtId(4) + cursor(1) + iter(4) + nullBitmap(N) + flag(1)
   const headerLen = 1 + 4 + 1 + 4 + nullBitmapLen + 1;
-  const paramData: Uint8Array[] = [];
+  const valueData: Uint8Array[] = [];
 
   for (let i = 0; i < params.length; i++) {
-    const p = params[i]!;
-    // For each param: type(2) + sign(1) + optionally value
-    paramData.push(uint16LE(0x0f)); // MYSQL_TYPE_VAR_STRING
-    paramData.push(uint8(0));       // unsigned
-    if (p !== null) {
-      paramData.push(encodeLenEnc(p.length));
-      paramData.push(p);
+    const p = params[i];
+    if (p !== null && p !== undefined) {
+      // Server uses cached param types from PREPARE — send raw value only
+      valueData.push(encodeLenEnc(p.length));
+      valueData.push(p);
     }
   }
 
-  const totalLen = headerLen + paramData.reduce((s, c) => s + c.length, 0);
+  const totalLen = headerLen + valueData.reduce((s, c) => s + c.length, 0);
   const payload = new Uint8Array(totalLen);
   let off = 0;
   payload[off++] = 0x17; // COM_STMT_EXECUTE
@@ -249,9 +246,11 @@ export function encodeStmtExecute(seq: number, stmtId: number, params: (Uint8Arr
     payload[off++] = byte;
   }
 
-  payload[off++] = 1; // send type info (1 = send params types)
+  // Don't send type info — server uses cached types from PREPARE
+  payload[off++] = 0; // new_params_bound_flag = 0 (use cached types)
 
-  for (const chunk of paramData) {
+  // Value data only (no type info)
+  for (const chunk of valueData) {
     payload.set(chunk, off);
     off += chunk.length;
   }

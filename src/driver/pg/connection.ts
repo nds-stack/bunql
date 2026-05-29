@@ -1,12 +1,13 @@
 import { PGError } from "./error";
-import { rowsToObjects, concat } from "./helpers";
+import { rowsToObjects } from "./helpers";
 
 /**
  * @module driver/pg/connection
  * @description TCP connection + pool for PostgreSQL — custom implementation via Bun.connect().
  */
 
-import { PGReader, encodeStartup, encodePassword, encodeMD5Password, encodeQuery, encodeParse, encodeBind, encodeDescribe, encodeExecute, encodeSync, encodeTerminate, type PGMessage, type PGColumn } from "./wire";
+import { PGReader, encodeStartup, encodeQuery, encodeParse, encodeBind, encodeDescribe, encodeExecute, encodeSync, encodeTerminate, type PGMessage, type PGColumn } from "./wire";
+import { performAuth } from "./auth";
 
 const textEncoder = new TextEncoder();
 
@@ -63,55 +64,12 @@ export class PGConnection {
     });
     this.#socket.write(startup);
 
-    await this.#auth();
-  }
-
-  async #auth(): Promise<void> {
-    const reader = new PGReader(new Uint8Array(0));
-
-    for (let attempts = 0; attempts < 100; attempts++) {
-      const raw = await this.#readBuffer();
-      const combined = concat([reader.buffer.subarray(reader.offset), raw]);
-      const newReader = new PGReader(combined);
-
-      while (newReader.hasMessage()) {
-        const msg = newReader.readMessage()!;
-
-        switch (msg.type) {
-          case "AuthenticationOk":
-            return;
-
-          case "AuthenticationCleartextPassword": {
-            if (!this.config.password) throw new PGError("Password required");
-            this.#socket!.write(encodePassword(this.config.password));
-            continue;
-          }
-
-          case "AuthenticationMD5Password": {
-            if (!this.config.password) throw new PGError("Password required");
-            const user = this.config.user ?? "postgres";
-            this.#socket!.write(encodeMD5Password(this.config.password, user, msg.salt));
-            continue;
-          }
-
-          case "ErrorResponse":
-            throw new PGError(`Auth failed: ${msg.message}`);
-
-          case "ReadyForQuery":
-            return;
-
-          default:
-            continue;
-        }
-      }
-
-      // Carry over unprocessed data
-      if (newReader.available > 0) {
-        const buf = new PGReader(new Uint8Array(newReader.buffer.subarray(newReader.offset)));
-        Object.assign(reader, buf);
-      }
-    }
-    throw new PGError("Auth timeout");
+    await performAuth(
+      () => this.#readBuffer(),
+      (data) => this.#socket!.write(data),
+      this.config.user ?? "postgres",
+      this.config.password,
+    );
   }
 
   async #readBuffer(): Promise<Uint8Array> {

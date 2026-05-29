@@ -22,12 +22,14 @@ import { Database as BunSQLiteDatabase } from "bun:sqlite";
 import { PGDriver } from "../src/driver/pg.ts";
 import { MySQLDriver } from "../src/driver/mysql.ts";
 import { MongoDriver } from "../src/driver/mongodb.ts";
+import { RedisDriver } from "../src/driver/redis.ts";
 import { BunQL } from "../src/bunql.ts";
 import { unlinkSync } from "fs";
 
 const PG_URL = process.env.PG_URL || "postgres://postgres@localhost:5432/postgres";
 const MYSQL_URL = process.env.MYSQL_URL || "mysql://root@localhost:3306/mysql";
 const MONGO_URL = process.env.MONGO_URL || "mongodb://localhost:27017/test_bench";
+const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379/0";
 const ITERATIONS = parseInt(process.env.ITERATIONS || "500", 10);
 const WARMUP = parseInt(process.env.WARMUP || "100", 10);
 
@@ -335,12 +337,62 @@ async function benchMySQL(iter: number, warmup: number): Promise<void> {
   await mysql.close();
 }
 
+async function benchRedis(iter: number, warmup: number): Promise<void> {
+  console.log("\n## Redis: RedisDriver (Bun has no built-in Redis driver)\n");
+  console.log("| Operation | RedisDriver |");
+  console.log("|-----------|-------------|");
+
+  const redis = new RedisDriver(REDIS_URL);
+
+  // Setup
+  await redis.run("DELETE FROM bench_users");
+
+  // ─── Simple SELECT ──────────────────────────────────
+  {
+    await redis.run("INSERT INTO bench_users (_id, name, email) VALUES (1, 'Alice', 'a@t.com')");
+
+    const durations: number[] = [];
+
+    for (let i = 0; i < warmup; i++) {
+      await redis.query("SELECT * FROM bench_users WHERE _id = 1");
+    }
+
+    for (let i = 0; i < iter; i++) {
+      const t0 = performance.now();
+      await redis.query("SELECT * FROM bench_users WHERE _id = 1");
+      durations.push(performance.now() - t0);
+    }
+
+    printBareRow("SELECT one row (by _id, SQL)", stats(durations));
+  }
+
+  // ─── Single INSERT ──────────────────────────────────
+  {
+    await redis.run("DELETE FROM bench_users");
+    const durations: number[] = [];
+
+    let counter = 0;
+    for (let i = -warmup; i < iter; i++) {
+      const id = i < 0 ? i + warmup : i;
+      const t0 = performance.now();
+      await redis.run(`INSERT INTO bench_users (_id, name, email) VALUES (${id}, 'test', 't@t.com')`);
+      if (i >= 0) durations.push(performance.now() - t0);
+    }
+
+    printBareRow("INSERT one row (SQL with literals)", stats(durations));
+  }
+
+  await redis.run("DELETE FROM bench_users");
+  await redis.close();
+}
+
 async function main() {
   console.log(`# vs-bun-sql Benchmark`);
   console.log(`Iterations: ${ITERATIONS}, Warmup: ${WARMUP}`);
   console.log(`PG: ${PG_URL}`);
   console.log(`MySQL: ${MYSQL_URL}`);
   console.log(`MongoDB: ${MONGO_URL}`);
+  console.log(`Redis: ${REDIS_URL}`);
 
   const start = performance.now();
 
@@ -366,6 +418,12 @@ async function main() {
     await benchMongoDB(ITERATIONS, WARMUP);
   } catch (e) {
     console.log(`\nMongoDB benchmark skipped: ${e}`);
+  }
+
+  try {
+    await benchRedis(ITERATIONS, WARMUP);
+  } catch (e) {
+    console.log(`\nRedis benchmark skipped: ${e}`);
   }
 
   const elapsed = ((performance.now() - start) / 1000).toFixed(1);
