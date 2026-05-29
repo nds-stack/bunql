@@ -52,7 +52,7 @@ export class RedisDriver implements DriverAdapter {
     this.#pool = new RedisConnectionPool(config);
   }
 
-  async query(sql: string, params?: unknown[]): Promise<QueryResult> {
+  async query(sql: string, _params?: unknown[]): Promise<QueryResult> {
     const node = parseSQL(sql);
     const cmd = astToRedis(node);
 
@@ -69,7 +69,7 @@ export class RedisDriver implements DriverAdapter {
     }
   }
 
-  async run(sql: string, params?: unknown[]): Promise<RunResult> {
+  async run(sql: string, _params?: unknown[]): Promise<RunResult> {
     const node = parseSQL(sql);
     const cmd = astToRedis(node);
 
