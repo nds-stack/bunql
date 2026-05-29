@@ -33,7 +33,7 @@ export function createHandler(bunql: BunQL, options: ServerOptions): (req: Reque
   }
 
   async function handleQuery(body: RequestPayload): Promise<Response> {
-    if (!body.sql) return errorResponse("Missing 'sql' field");
+    if (!body.sql || typeof body.sql !== "string") return errorResponse("Missing or invalid 'sql' field");
     try {
       const result = bunql.query(body.sql, body.params);
       return jsonResponse(result);
@@ -43,7 +43,7 @@ export function createHandler(bunql: BunQL, options: ServerOptions): (req: Reque
   }
 
   async function handleRun(body: RequestPayload): Promise<Response> {
-    if (!body.sql) return errorResponse("Missing 'sql' field");
+    if (!body.sql || typeof body.sql !== "string") return errorResponse("Missing or invalid 'sql' field");
     try {
       const result = await bunql.run(body.sql, body.params);
       return jsonResponse(result);
@@ -53,7 +53,7 @@ export function createHandler(bunql: BunQL, options: ServerOptions): (req: Reque
   }
 
   async function handleExec(body: RequestPayload): Promise<Response> {
-    if (!body.sql) return errorResponse("Missing 'sql' field");
+    if (!body.sql || typeof body.sql !== "string") return errorResponse("Missing or invalid 'sql' field");
     try {
       await bunql.exec(body.sql);
       return jsonResponse({ ok: true });

@@ -1,5 +1,4 @@
 import { MySQLError } from "./error";
-import { MySQLConnectionPool } from "./pool";
 
 /**
  * @module driver/mysql/connection

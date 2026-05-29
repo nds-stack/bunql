@@ -7,7 +7,6 @@ import { ReaderPool } from "./reader-pool.ts";
 import { FTS5Helper } from "./fts5.ts";
 import type { BunQLOptions, BunQLConfig, BunQLMetrics, CacheStats, RetryConfig } from "./types/index.ts";
 import { createDbInstance, type DbInitResult } from "./bunql-init.ts";
-import { validateBackupPath } from "./bunql-maintenance.ts";
 
 export interface BunQLState {
   db: Database;

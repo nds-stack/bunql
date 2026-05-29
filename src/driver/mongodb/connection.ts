@@ -6,7 +6,6 @@
 import { buildCommand, parseResponse, readHeader } from "./wire-protocol";
 import { performScramSha256 } from "./auth-scram";
 import { MongoError } from "./error";
-import { ConnectionPool } from "./pool";
 import { encodeBSON } from "./bson-encoder";
 
 export interface MongoConnectionConfig {

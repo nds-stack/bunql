@@ -1,5 +1,4 @@
 import { PGError } from "./error";
-import { PGConnectionPool } from "./pool";
 import { rowsToObjects, concat } from "./helpers";
 
 /**
