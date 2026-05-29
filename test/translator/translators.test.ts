@@ -298,6 +298,24 @@ describe("MQL operators → SQL", () => {
     const result = astToSQL(ast);
     expect(result.sql).toContain("NOT");
   });
+
+  test("$nor top-level → SQL NOT AND NOT", () => {
+    const ast = parseMQL("users", "find", [{ $nor: [{ age: 10 }, { age: 20 }] }]);
+    if (ast.type !== "select") throw new Error(`Expected select, got ${ast.type}`);
+    const result = astToSQL(ast);
+    expect(result.sql).toContain("NOT");
+    expect(result.sql).toContain("AND");
+    expect(result.params).toEqual([10, 20]);
+  });
+
+  test("$expr top-level → SQL column comparison", () => {
+    const ast = parseMQL("users", "find", [{ $expr: { $gt: ["$balance", "$limit"] } }]);
+    if (ast.type !== "select") throw new Error(`Expected select, got ${ast.type}`);
+    const result = astToSQL(ast);
+    expect(result.sql).toContain("balance");
+    expect(result.sql).toContain("limit");
+    expect(result.sql).toContain(">");
+  });
 });
 
 describe("MQL update operators → SQL", () => {
@@ -365,6 +383,17 @@ describe("MQL accumulators → SQL", () => {
     if (ast.type === "aggregate") {
       const result = astToSQL(ast);
       expect(result.sql).toContain("json_group_array(DISTINCT");
+    }
+  });
+
+  test("$push in $group", () => {
+    const ast = parseMQL("orders", "aggregate", [[{
+      $group: { _id: "$status", items: { $push: "$name" } },
+    }]]);
+    expect(ast.type).toBe("aggregate");
+    if (ast.type === "aggregate") {
+      const result = astToSQL(ast);
+      expect(result.sql).toContain("json_group_array(name)");
     }
   });
 });

@@ -3,15 +3,24 @@
 ## [v0.3.0-beta.3] — 2026-05-30
 
 ### Added
-- **50 new tests** covering 19 previously untested features:
-  - Parser: HAVING, CTE WITH, UNION/INTERSECT/EXCEPT, subquery FROM, INSERT...SELECT, RETURNING (INSERT/UPDATE/DELETE), DROP TABLE, CREATE TABLE constraints, COUNT(DISTINCT), arithmetic expressions
-  - MQL→SQL operators: `$mod`, `$size`, `$type`, `$all`, `$elemMatch`, `$expr`, `$regex`+`$options`, `$exists`, `$not`, `$inc`, `$unset`, `$set`
-  - Accumulators: `$avg`, `$min`, `$max`, `$addToSet`
-  - Aggregate stages: `$lookup` (simple + complex), `$unwind`, `$sample`
-  - SQL round-trip: HAVING, CTE, UNION, arithmetic, INSERT...SELECT, RETURNING, LEFT JOIN
+- **53 new tests** (397 → 400 + 3 for $nor/$expr/$push fixes):
+  - $nor top-level logical operator
+  - $expr top-level field comparison
+  - $push accumulator (valid SQL output)
+  - Plus 50 from earlier beta.3 batch:
+    - Parser: HAVING, CTE WITH, UNION/INTERSECT/EXCEPT, subquery FROM, INSERT...SELECT, RETURNING (INSERT/UPDATE/DELETE), DROP TABLE, CREATE TABLE constraints, COUNT(DISTINCT), arithmetic expressions
+    - MQL→SQL: `$mod`, `$size`, `$type`, `$all`, `$elemMatch`, `$regex`+`$options`, `$exists`, `$not`, `$inc`, `$unset`, `$set`
+    - Accumulators: `$avg`, `$min`, `$max`, `$addToSet`
+    - Aggregate stages: `$lookup` (simple + complex), `$unwind`, `$sample`
+    - SQL round-trip: HAVING, CTE, UNION, arithmetic, INSERT...SELECT, RETURNING, LEFT JOIN
+    - SQL JOIN → MongoDB `$lookup` (LEFT + INNER)
+- **$push accumulator** — now generates `json_group_array(col)` (SQLite/PG) or `GROUP_CONCAT(col)` (MySQL) instead of invalid `PUSH(col)`
 
 ### Fixed
-- Parser: `=`, `<>`, `>`, `<`, `>=`, `<=` operator right side now parsed as column expression (not literal), fixing JOIN `ON a.id = b.user_id` column-to-column comparisons
+- **$nor top-level broken** — `{ $nor: [{ age: 10 }, { age: 20 }] }` now produces `WHERE (NOT (age = ?)) AND (NOT (age = ?))`. Previously treated as `$in` on field `"$nor"`.
+- **$expr top-level broken** — `{ $expr: { $gt: ["$balance", "$limit"] } }` now produces `WHERE balance > limit`. Previously treated as field `"$expr"` comparison.
+- **$and/$or top-level** — same guard added for consistency
+- Parser: `=`, `<>`, `>`, `<`, `>=`, `<=` operator right side now parsed as column expression, fixing JOIN `ON a.id = b.user_id` column-to-column comparisons
 - Parser: `WITH`, `UNION`, `INTERSECT`, `EXCEPT`, `ALL`, `PRIMARY`, `KEY`, `DEFAULT`, `UNIQUE`, `IF`, `EXISTS` keywords now registered in lexer (code existed but unreachable)
 - Parser: Subquery FROM `(SELECT ...)` uses correct rparen token type check
 - Parser: `#parseDelete()` now supports `RETURNING` clause

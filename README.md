@@ -13,7 +13,7 @@
 [![Bun](https://img.shields.io/badge/Bun-%3E%3D1.3.0-black?logo=bun)](https://bun.sh)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue?logo=typescript)](https://www.typescriptlang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-397-green)]()
+[![Tests](https://img.shields.io/badge/tests-400-green)]()
 [![Bundle](https://img.shields.io/badge/bundle-112.9KB%20core%20%2F%20134.7KB%20driver-blue)]()
 
 ---
@@ -1292,9 +1292,9 @@ Write operations via the `/run` endpoint are synchronous (direct to `bun:sqlite`
 
 ## Stability
 
-- **v0.3.0-beta.3 (current)** — All 5 backends + 397 tests + SQL JOIN → MongoDB `$lookup` + parser column-to-column comparison fix + 50+ new tests across MQL operators/accumulators + fixed CTE/UNION/subquery/DROP TABLE/RETURNING + clean lint
+- **v0.3.0-beta.3 (current)** — All 5 backends + 400 tests + fix `$nor`/`$expr` top-level + `$push` accumulator valid SQL + SQL JOIN → MongoDB `$lookup` + parser column-to-column comparison + 50+ new tests
 - **v0.3.0 (stable)** — Statement format control, transaction modes, pragma helper, serialize, verbose mode
-- **397 tests** — unit, integration, concurrency, stress, FTS5, parser, translators, BSON, RESP, PG wire, MySQL wire, transactions, MQL operators, accumulators, advanced SQL
+- **400 tests** — unit, integration, concurrency, stress, FTS5, parser, translators, BSON, RESP, PG wire, MySQL wire, transactions, MQL operators, accumulators, advanced SQL
 - **5000 sequential writes** — verified stable
 - **Graceful shutdown** — drain queue → finalize statements → close DB
 - **Memory safe** — LRU cache eviction, `yocto-queue` linked-list, no unbounded growth

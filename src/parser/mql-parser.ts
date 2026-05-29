@@ -207,6 +207,29 @@ function mqlToCondition(obj: Record<string, unknown>): Condition {
   if (entries.length === 0) return { type: "and", conditions: [] };
 
   const conditions: Condition[] = entries.map(([field, value]) => {
+    // Handle top-level logical operators
+    if (field === "$and" && Array.isArray(value))
+      return { type: "and", conditions: value.map(o => mqlToCondition(o as Record<string, unknown>)) };
+    if (field === "$or" && Array.isArray(value))
+      return { type: "or", conditions: value.map(o => mqlToCondition(o as Record<string, unknown>)) };
+    if (field === "$nor" && Array.isArray(value))
+      return { type: "and", conditions: value.map(o => ({ type: "not" as const, condition: mqlToCondition(o as Record<string, unknown>) })) };
+    if (field === "$expr" && typeof value === "object" && !Array.isArray(value)) {
+      const expr = value as Record<string, unknown[]>;
+      const opKey = Object.keys(expr)[0] ?? "$eq";
+      const args = expr[opKey] as unknown[];
+      const opMap: Record<string, string> = { $gt: "gt", $lt: "lt", $gte: "gte", $lte: "lte", $eq: "eq", $ne: "neq" };
+      const leftArg = args?.[0];
+      const rightArg = args?.[1];
+      const leftCol: ColumnExpr = typeof leftArg === "string" && (leftArg as string).startsWith("$")
+        ? { type: "column", name: (leftArg as string).slice(1) }
+        : { type: "literal", value: leftArg as Literal };
+      const rightCol: ColumnExpr = typeof rightArg === "string" && (rightArg as string).startsWith("$")
+        ? { type: "column", name: (rightArg as string).slice(1) }
+        : { type: "literal", value: rightArg as Literal };
+      return { type: "expr" as const, left: leftCol, op: opMap[opKey] ?? "eq", right: rightCol };
+    }
+
     const col: ColumnExpr = { type: "column", name: field };
 
     if (value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date)) {

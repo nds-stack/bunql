@@ -183,6 +183,11 @@ function translateAggregate(n: import("../ast/ast.ts").AggregateNode, ctx: Ctx):
             const fn = a.func === "first" ? "FIRST_VALUE" : "LAST_VALUE";
             return `${fn}(${a.field}) ${over} AS ${k}`;
           }
+          if (a.func === "push") {
+            return ctx.dialect === "mysql"
+              ? `GROUP_CONCAT(${a.field}) AS ${k}`
+              : `json_group_array(${a.field}) AS ${k}`;
+          }
           return `${a.func.toUpperCase()}(${a.field}) AS ${k}`;
         });
         selectColumns = [...idParts, ...accParts];
