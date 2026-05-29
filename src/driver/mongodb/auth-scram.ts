@@ -27,7 +27,7 @@ export async function performScramSha256(
   username: string,
   password: string,
 ): Promise<void> {
-  const authDb = "admin";
+  const _authDb = "admin";
   const clientNonce = generateNonce();
   const firstBare = `n=${escapeUsername(username)},r=${clientNonce}`;
   const clientFirst = `n,,${firstBare}`;

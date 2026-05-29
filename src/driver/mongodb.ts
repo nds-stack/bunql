@@ -133,7 +133,7 @@ export class MongoDriver implements DriverAdapter {
     }
   }
 
-  #toQueryResult(response: Record<string, unknown>, command: MongoCommand): QueryResult {
+  #toQueryResult(response: Record<string, unknown>, _command: MongoCommand): QueryResult {
     const documents: Record<string, unknown>[] = [];
 
     if (response.cursor) {

@@ -73,11 +73,11 @@ export class TransactionManager {
 
   #createCtx(): TxContext {
     return {
-      run: async (sql, params) => {
+      run: async (_sql, _params) => {
         // Basic implementation — subclasses can override
         throw new Error("Not implemented");
       },
-      query: async (sql, params) => {
+      query: async (_sql, _params) => {
         throw new Error("Not implemented");
       },
       savepoint: (name) => this.backend.savepoint(name),

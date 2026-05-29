@@ -6,7 +6,6 @@
 import { buildCommand, parseResponse, readHeader } from "./wire-protocol";
 import { performScramSha256 } from "./auth-scram";
 import { MongoError } from "./error";
-import { encodeBSON } from "./bson-encoder";
 
 export interface MongoConnectionConfig {
   hostname: string;
@@ -52,16 +51,16 @@ export class MongoConnection {
       hostname: this.config.hostname,
       port: this.config.port,
       socket: {
-        data(socket: unknown, data: Uint8Array) {
+        data(_socket: unknown, data: Uint8Array) {
           self.#onData(data);
         },
-        error(socket: unknown, err: Error) {
+        error(_socket: unknown, err: Error) {
           self.#onError(err);
         },
-        close(socket: unknown) {
+        close(_socket: unknown) {
           self.#onClose();
         },
-        drain(socket: unknown) {},
+        drain(_socket: unknown) {},
       },
     });
 
@@ -129,7 +128,6 @@ export class MongoConnection {
 
   async executeWithSession(db: string, command: Record<string, unknown>): Promise<Record<string, unknown>> {
     if (!this.#session) return this.execute(db, command);
-    const lsidDoc = encodeBSON({ id: this.#session.id });
     const cmd = { ...command, lsid: { $binary: { base64: btoa(String.fromCharCode(...this.#session.id)), subType: "04" } } };
     return this.execute(db, cmd);
   }

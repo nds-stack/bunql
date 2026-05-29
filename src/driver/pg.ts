@@ -6,7 +6,6 @@
 import type { DriverAdapter, QueryResult, RunResult } from "./adapter.ts";
 import { type PGConnectionConfig } from "./pg/connection.ts";
 import { PGConnectionPool } from "./pg/pool.ts";
-import { PGError } from "./pg/error.ts";
 
 export interface PGDriverOptions {
   hostname?: string;

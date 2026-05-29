@@ -1,4 +1,4 @@
-import { Database, type SQLQueryBindings } from "bun:sqlite";
+import { Database } from "bun:sqlite";
 import { WriteQueue } from "./write-queue.ts";
 import { RetryPolicy, DEFAULT_RETRY_CONFIG } from "./retry-policy.ts";
 import { TransactionManager } from "./transaction-manager.ts";
@@ -6,7 +6,7 @@ import { StatementCache } from "./statement-cache.ts";
 import { ReaderPool } from "./reader-pool.ts";
 import { FTS5Helper } from "./fts5.ts";
 import type { BunQLOptions, BunQLConfig, BunQLMetrics, CacheStats, RetryConfig } from "./types/index.ts";
-import { createDbInstance, type DbInitResult } from "./bunql-init.ts";
+import { createDbInstance } from "./bunql-init.ts";
 
 export interface BunQLState {
   db: Database;

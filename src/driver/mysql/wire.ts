@@ -51,7 +51,7 @@ export function readLenEncInt(data: Uint8Array, offset: number): { value: number
   }
   // 0xfe: 8-byte integer (rare, used for large values)
   const low = data[offset + 1]! | (data[offset + 2]! << 8) | (data[offset + 3]! << 16) | (data[offset + 4]! << 24);
-  const high = data[offset + 5]! | (data[offset + 6]! << 8) | (data[offset + 7]! << 16) | (data[offset + 8]! << 24);
+  const _high = data[offset + 5]! | (data[offset + 6]! << 8) | (data[offset + 7]! << 16) | (data[offset + 8]! << 24);
   return { value: low >>> 0, bytes: 9 };
 }
 
@@ -212,7 +212,7 @@ export function encodeStmtPrepare(seq: number, sql: string): Uint8Array {
   return encodePacket(seq, payload);
 }
 
-export function encodeStmtExecute(seq: number, stmtId: number, params: (Uint8Array | null)[], paramTypes?: number[]): Uint8Array {
+export function encodeStmtExecute(seq: number, stmtId: number, params: (Uint8Array | null)[], _paramTypes?: number[]): Uint8Array {
   const numParams = params.length;
   let totalLen = 1 + 4 + 1 + 4; // cmd + stmtId + cursor + iter
 
@@ -556,12 +556,6 @@ function uint8(value: number): Uint8Array {
 function uint32LE(value: number): Uint8Array {
   const buf = new Uint8Array(4);
   new DataView(buf.buffer).setUint32(0, value, true);
-  return buf;
-}
-
-function uint16LE(value: number): Uint8Array {
-  const buf = new Uint8Array(2);
-  new DataView(buf.buffer).setUint16(0, value, true);
   return buf;
 }
 

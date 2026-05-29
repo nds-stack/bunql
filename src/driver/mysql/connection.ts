@@ -6,8 +6,8 @@ import { MySQLError } from "./error";
  */
 
 import {
-  parseHandshake, encodeHandshakeResponse, encodeQueryPacket, encodeStmtPrepare, encodeStmtExecute, encodeStmtClose, assemblePackets, parseResponse, parsePrepareOK, concatBytes,
-  type HandshakePacket, type ResponsePacket, type ResultSetPacket, type PrepareOKPacket,
+  parseHandshake, encodeHandshakeResponse, encodeQueryPacket, encodeStmtPrepare, encodeStmtExecute, encodeStmtClose, assemblePackets, parseResponse, parsePrepareOK,
+  type ResponsePacket, type PrepareOKPacket,
 } from "./wire";
 
 export interface MySQLConnectionConfig {
@@ -50,10 +50,10 @@ export class MySQLConnection {
       hostname: this.config.hostname,
       port: this.config.port,
       socket: {
-        data(socket: unknown, data: Uint8Array) { self.#onData(data); },
-        error(socket: unknown, err: Error) { self.#onError(err); },
-        close(socket: unknown) { self.#onClose(); },
-        drain(socket: unknown) {},
+        data(_socket: unknown, data: Uint8Array) { self.#onData(data); },
+        error(_socket: unknown, err: Error) { self.#onError(err); },
+        close(_socket: unknown) { self.#onClose(); },
+        drain(_socket: unknown) {},
       },
     }) as unknown as SocketHandle;
 

@@ -1,4 +1,4 @@
-import type { Statement as BunStatement, SQLQueryBindings } from "bun:sqlite";
+import type { Statement as BunStatement } from "bun:sqlite";
 import type { BunQLState } from "./bunql-state.ts";
 import type { RunResult, BatchOperation, TransactionMode } from "./types/index.ts";
 import { QueueError } from "./errors/queue-error.ts";
@@ -25,7 +25,7 @@ export const writeOps = {
       s.writeQueue.enqueue(async () => {
         try {
           s.db.run("BEGIN IMMEDIATE");
-          const results = executeBatch(operations, (sql) => s.statementCache.get(sql), s.config.hooks as any);
+          const results = executeBatch(operations, (sql) => s.statementCache.get(sql), s.config.hooks);
           s.db.run("COMMIT");
           return results;
         } catch (error) {

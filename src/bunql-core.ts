@@ -157,14 +157,14 @@ export class BunQL {
   mql(collection: string): MqlQuery {
     return new MqlQuery(collection, {
       executeMQL: (col, method, args) => {
-        const cmd = this.#parseMQL(col, method, args);
+        this.#parseMQL(col, method, args);
         throw new Error(
           "MongoDB queries require MongoDriver from @nds-stack/bunql/driver. " +
           "BunQL class currently supports SQLite only.",
         );
       },
       executeMQLRun: (col, method, args) => {
-        const cmd = this.#parseMQL(col, method, args);
+        this.#parseMQL(col, method, args);
         throw new Error(
           "MongoDB writes require MongoDriver from @nds-stack/bunql/driver. " +
           "BunQL class currently supports SQLite only.",

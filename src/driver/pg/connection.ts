@@ -6,7 +6,7 @@ import { rowsToObjects } from "./helpers";
  * @description TCP connection + pool for PostgreSQL — custom implementation via Bun.connect().
  */
 
-import { PGReader, encodeStartup, encodeQuery, encodeParse, encodeBind, encodeDescribe, encodeExecute, encodeSync, encodeTerminate, type PGMessage, type PGColumn } from "./wire";
+import { PGReader, encodeStartup, encodeQuery, encodeParse, encodeBind, encodeDescribe, encodeExecute, encodeSync, encodeTerminate, type PGColumn } from "./wire";
 import { performAuth } from "./auth";
 
 const textEncoder = new TextEncoder();
@@ -51,10 +51,10 @@ export class PGConnection {
       hostname: this.config.hostname,
       port: this.config.port,
       socket: {
-        data(socket: unknown, data: Uint8Array) { self.#onData(data); },
-        error(socket: unknown, err: Error) { self.#onError(err); },
-        close(socket: unknown) { self.#onClose(); },
-        drain(socket: unknown) {},
+        data(_socket: unknown, data: Uint8Array) { self.#onData(data); },
+        error(_socket: unknown, err: Error) { self.#onError(err); },
+        close(_socket: unknown) { self.#onClose(); },
+        drain(_socket: unknown) {},
       },
     }) as unknown as SocketHandle;
 
@@ -233,7 +233,7 @@ export class PGConnection {
       this.#pendingReject = null;
     }
     if (this.#socket) {
-      try { this.#socket.write(encodeTerminate()); } catch {}
+      try { this.#socket.write(encodeTerminate()); } catch { /* ignore close errors */ }
       this.#socket.end();
       this.#socket = null;
     }

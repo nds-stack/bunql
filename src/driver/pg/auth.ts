@@ -1,6 +1,6 @@
 import { PGError } from "./error";
 import { concat } from "./helpers";
-import { PGReader, encodePassword, encodeMD5Password, type PGMessage } from "./wire";
+import { PGReader, encodePassword, encodeMD5Password } from "./wire";
 
 export async function performAuth(
   readBuffer: () => Promise<Uint8Array>,

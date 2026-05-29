@@ -119,7 +119,7 @@ export function encodeQuery(sql: string): Uint8Array {
 export function encodeParse(name: string, sql: string, paramTypes?: number[]): Uint8Array {
   const nameBytes = textEncoder.encode(name + "\0");
   const sqlBytes = textEncoder.encode(sql + "\0");
-  const numParams = be32(0);
+  const _numParams = be32(0);
   const paramTypeBytes = paramTypes ? concat(paramTypes.map(be32)) : new Uint8Array(0);
   const body = concat([nameBytes, sqlBytes, be16(paramTypes?.length ?? 0), paramTypeBytes]);
   const len = be32(4 + body.length);

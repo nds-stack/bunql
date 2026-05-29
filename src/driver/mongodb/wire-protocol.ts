@@ -3,7 +3,7 @@
  * @description OP_MSG (MongoDB 3.6+) wire protocol — custom implementation, zero deps.
  */
 
-import { encodeBSON, encodeBSONCommand } from "./bson-encoder";
+import { encodeBSONCommand } from "./bson-encoder";
 import { decodeBSON, decodeBSONDocuments } from "./bson-decoder";
 
 export const OP_MSG = 2013;

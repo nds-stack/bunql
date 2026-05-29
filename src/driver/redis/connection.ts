@@ -1,5 +1,4 @@
 import { RedisError } from "./error";
-import { RedisConnectionPool } from "./pool";
 
 /**
  * @module driver/redis/connection
@@ -50,10 +49,10 @@ export class RedisConnection {
       hostname: this.config.hostname,
       port: this.config.port,
       socket: {
-        data(socket: unknown, data: Uint8Array) { self.#onData(data); },
-        error(socket: unknown, err: Error) { self.#onError(err); },
-        close(socket: unknown) { self.#onClose(); },
-        drain(socket: unknown) {},
+        data(_socket: unknown, data: Uint8Array) { self.#onData(data); },
+        error(_socket: unknown, err: Error) { self.#onError(err); },
+        close(_socket: unknown) { self.#onClose(); },
+        drain(_socket: unknown) {},
       },
     });
 
@@ -109,7 +108,7 @@ export class RedisConnection {
   async exec(): Promise<RESPValue[]> {
     if (!this.#inTransaction) throw new Error("Not in transaction");
     this.#inTransaction = false;
-    const queue = this.#txQueue;
+    const _queue = this.#txQueue;
     this.#txQueue = [];
 
     // Send EXEC command

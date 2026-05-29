@@ -3,7 +3,7 @@ import { ConnectionError } from "./errors/connection-error.ts";
 
 export async function closeBunQL(s: BunQLState): Promise<void> {
   if (s.closed) return;
-  (s as any).closed = true;
+  (s as unknown as Record<string, unknown>).closed = true;
 
   if (s.maintenanceTimer) {
     clearInterval(s.maintenanceTimer);
