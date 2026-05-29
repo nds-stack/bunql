@@ -213,39 +213,20 @@ export function encodeStmtPrepare(seq: number, sql: string): Uint8Array {
 
 export function encodeStmtExecute(seq: number, stmtId: number, params: (Uint8Array | null)[], paramTypes?: number[]): Uint8Array {
   const nullBitmapLen = Math.ceil(params.length / 8);
-  const headerLen = 1 + 4 + 1 + 4 + nullBitmapLen + 1;
-  const paramData: Uint8Array[] = [];
-
+  // Compute total size: header + (type(2) + unsigned(1) + lenenc(N) + value(M)) for each param
+  let totalLen = 1 + 4 + 1 + 4 + nullBitmapLen + 1;
+  const valueSegments: Uint8Array[] = [];
   for (let i = 0; i < params.length; i++) {
+    totalLen += 3; // type(2) + unsigned(1)
     const p = params[i];
-    // Use actual MySQL type if available, otherwise assume VAR_STRING
-    const typeCode = paramTypes && i < paramTypes.length ? paramTypes[i]! : 0x0f;
-    paramData.push(uint16LE(typeCode));
-    paramData.push(uint8(0));
     if (p !== null && p !== undefined) {
-      // For numeric types (MYSQL_TYPE_LONG=3, SHORT=1, TINY=1, FLOAT=4, DOUBLE=5, LONGLONG=8):
-      // send fixed-length format. For string types: length-encoded format.
-      if (typeCode <= 8 && typeCode !== 7 && typeCode !== 6) {
-        // Numeric types: send as fixed-length integer (4 bytes LE for LONG, 8 for LONGLONG)
-        const numVal = parseInt(new TextDecoder().decode(p), 10);
-        if (typeCode === 8) { // MYSQL_TYPE_LONGLONG
-          const buf = new Uint8Array(8);
-          new DataView(buf.buffer).setBigInt64(0, BigInt(numVal), true);
-          paramData.push(buf);
-        } else { // MYSQL_TYPE_LONG, SHORT, TINY, FLOAT, DOUBLE
-          const buf = new Uint8Array(4);
-          new DataView(buf.buffer).setInt32(0, numVal, true);
-          paramData.push(buf);
-        }
-      } else {
-        // String types: length-encoded format
-        paramData.push(encodeLenEnc(p.length));
-        paramData.push(p);
-      }
+      const lenEnc = encodeLenEnc(p.length);
+      valueSegments.push(lenEnc);
+      valueSegments.push(p);
+      totalLen += lenEnc.length + p.length;
     }
   }
 
-  const totalLen = headerLen + paramData.reduce((s, c) => s + c.length, 0);
   const payload = new Uint8Array(totalLen);
   let off = 0;
   payload[off++] = 0x17;
@@ -262,11 +243,18 @@ export function encodeStmtExecute(seq: number, stmtId: number, params: (Uint8Arr
     payload[off++] = byte;
   }
 
-  payload[off++] = 1; // new_params_bound_flag = 1 (send types)
+  payload[off++] = 1; // new_params_bound_flag = 1 (all types as VAR_STRING)
 
-  for (const chunk of paramData) {
-    payload.set(chunk, off);
-    off += chunk.length;
+  for (let i = 0; i < params.length; i++) {
+    const p = params[i];
+    payload[off++] = 0x0f; // MYSQL_TYPE_VAR_STRING
+    payload[off++] = 0;    // type continuation
+    payload[off++] = 0;    // unsigned flag
+    if (p !== null && p !== undefined) {
+      const lenEnc = encodeLenEnc(p.length);
+      for (const b of lenEnc) payload[off++] = b;
+      for (const b of p) payload[off++] = b;
+    }
   }
 
   return encodePacket(seq, payload);

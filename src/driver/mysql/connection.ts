@@ -113,13 +113,11 @@ export class MySQLConnection {
     const packet = encodeStmtPrepare(this.#seq++, sql);
     this.#socket.write(packet);
 
-    // Read prepare_ok + all column/param definition packets
     const raw = await this.#readBuffer();
     const packets = assemblePackets(raw);
     if (packets.length === 0) throw new MySQLError("Empty prepare response");
     const info = parsePrepareOK(packets[0]!, packets);
 
-    // Drain remaining packets (column defs, param defs, EOF)
     const totalPackets = 1 + info.columnCount + info.paramCount;
     while (packets.length < totalPackets) {
       const more = await this.#readBuffer();
@@ -130,10 +128,10 @@ export class MySQLConnection {
     return info;
   }
 
-  async executePrepared(stmtId: number, params: (Uint8Array | null)[]): Promise<ResponsePacket> {
+  async executePrepared(stmtId: number, params: (Uint8Array | null)[], paramTypes?: number[]): Promise<ResponsePacket> {
     if (!this.#socket || this.#closed) throw new Error("Connection closed");
     this.#seq = 0;
-    const packet = encodeStmtExecute(this.#seq++, stmtId, params);
+    const packet = encodeStmtExecute(this.#seq++, stmtId, params, paramTypes);
     this.#socket.write(packet);
     const raw = await this.#readBuffer();
     const packets = assemblePackets(raw);
