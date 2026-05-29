@@ -14,7 +14,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue?logo=typescript)](https://www.typescriptlang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-345-green)]()
-[![Bundle](https://img.shields.io/badge/bundle-82.8KB%20core%20%2F%20115.5KB%20driver-blue)]()
+[![Bundle](https://img.shields.io/badge/bundle-99.8KB%20core%20%2F%20128.7KB%20driver-blue)]()
 
 ---
 

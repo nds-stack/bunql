@@ -1,8 +1,18 @@
 # Changelog
 
-## [Unreleased]
+## [v0.3.0-beta.1] — 2025-05-29
 
 ### Added
+- **Parameter binding (ParamRef)** — SQL `?` / `$N` placeholders: parsed to `ParamRef` AST node, resolved by MongoDB translator with `resolveValue()`. All drivers (SQLite/PG/MySQL native, MongoDB via substitution) now support parameterized queries.
+- **$mod operator** — MQL `{ field: { $mod: [5, 2] } }` → AST `ModCondition` → SQL `field % ? = ?`. Replaces the broken `"_mod_"` string hack that produced silently wrong results.
+- **$regex + $options round-trip** — MQL `{ field: { $regex: "abc", $options: "i" } }` now preserves flags through AST → SQL `LOWER(field) LIKE LOWER(?)` → back to MQL with `$options`.
+- **$unwind object form** — `{ $unwind: { path: "$arr", preserveNullAndEmptyArrays: true } }` now parsed correctly. Supports `preserveNullAndEmptyArrays` and `includeArrayIndex`.
+- **$lookup complex variant** — `{ $lookup: { from, let, pipeline, as } }` now parsed and emitted. SQL translation emulates via subquery JOIN.
+- **$size operator** — MQL `{ arr: { $size: 3 } }` → AST `SizeCondition` → SQL `json_array_length(col) = ?`. Dialect-aware (SQLite/PG/MySQL).
+- **$type operator** — MQL `{ field: { $type: "string" } }` → AST `TypeCheckCondition` → SQL `TYPEOF(col) = 'text'` (SQLite) with BSON type mapping.
+- **DDL CREATE TABLE** — `CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)` now parsed to `CreateTableNode` AST → SQL output. MongoDB returns no-op (schemaless).
+- **Subquery → MongoDB pipeline** — `FROM (SELECT ...)` no longer throws for MongoDB. Translated to aggregate pipeline with `$match`, `$project`, `$sort`, `$limit`/`$skip`.
+- **RelationsQuery type safety** — removed `as never` casts in `sql-builder.ts`, replaced with `RelationsExecutor` type from relations module.
 - **Integration tests** — 4 new files covering SQLite/PG/MySQL/MongoDB CRUD via integration (test/integration/)
 - **Redis benchmark** — bench/vs-bun-sql.ts RedisDriver section (skips gracefully if Redis unavailable)
 - **Benchmark SQLite** — separate `:memory:` databases for fair bun:sqlite vs BunQL comparison
@@ -17,7 +27,6 @@
 - **Arithmetic expressions** — `a + b`, `price * qty` parsed as binary ColumnExpr in SELECT
 - **MQL parser: missing methods** — findOne, updateMany, deleteMany, replaceOne, findOneAndUpdate, findOneAndDelete
 - **MQL parser: $nor** — `{ $nor: [...] }` operator → AND of NOT conditions
-- **MQL parser: $mod/$all/$size/$type** — additional filter operators (approximate SQL translation)
 - **MQL parser: $regex + $options** — `{ field: { $regex: "pat", $options: "i" } }` support
 - **Feature Support Matrix** — comprehensive README table covering all 5 backends
 - **.gitignore** — test/tmp/ and bench/tmp/ directories
@@ -28,14 +37,18 @@
 - **to-sql.ts aggregate translation** — rewrite to fix $skip/$project silent ignore, adds $lookup→JOIN support
 - **to-mongodb.ts translateSelect** — rewritten to auto-detect when aggregate pipeline is needed
 - **Tests: 345 (was 308)** — +37 integration tests
-- **Bundle: 82.8KB core / 115.5KB driver / 5.2KB server** — slight increase from refactor
+- **Bundle: 99.8KB core / 128.7KB driver / 58.1KB query / 5.2KB server** — increase from operators + DDL + subquery support
 - **BunQL class no longer accepts mongodb:///redis:///postgres:///mysql:// URLs** — throws helpful error directing to driver subpath imports
 - **README cleanup** — removed obsolete "Migrating from v0.1.0-alpha.x" section, fixed incorrect code examples (MongoDB/PG placeholder syntax, Dual API, constructor examples)
 
 ### Fixed
+- **MySQL buffer management** — `assemblePackets()` returns `{ packets, remaining }`, `#readBuffer()` accumulates data, never discards incomplete packets. Fixes TCP fragmentation bugs.
+- **MySQL prepared statements** — type/value blocks: ALL types first, then ALL values (not interleaved). Added `parseBinaryRow()` for binary result sets.
+- **MySQL parseColumnDefinition** — fixed 2-byte type offset shift (`len-4` → `len-6`)
+- **MySQL encodeStmtExecute** — type encoding: 2 bytes per param (`uint8(type) + uint8(unsigned_flag)`)
+- **MySQL readLenEncInt** — fixed 0xfe 8-byte read (lost high 32 bits)
 - **PG encodeBind** — invalid result format count (be16(1) without format code → be16(0))
 - **MySQL parsePrepareOK** — format mismatch with MySQL 8.0 OK header + 4B/2B fields
-- **MySQL encodeStmtExecute** — null params skipped TYPE info, now sends type for all params
 - **PG command tag regex** — `match[2]` → `match[1]` after regex change for INSERT/UPDATE/DELETE counts
 - **PG ErrorResponse** — empty message when extended query protocol rejected (encodeBind fixed)
 - **RetryPolicy.execute()** — now wired to batch/exec/transaction/checkpoint/backup/vacuum (was dead code)
