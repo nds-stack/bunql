@@ -91,7 +91,7 @@ describe("SQLite integration", () => {
     const single = await db.sql`SELECT * FROM users WHERE id = ${1}`.get();
     expect(single?.name).toBe("Alice");
 
-    const ins = db.sql`INSERT INTO users (name, email) VALUES (${"Charlie"}, ${"c@test.com"})`.run();
+    const ins = await db.sql`INSERT INTO users (name, email) VALUES (${"Charlie"}, ${"c@test.com"})`.run();
     expect(ins.changes).toBe(1);
   });
 
