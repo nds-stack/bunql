@@ -11,10 +11,13 @@
   - SQL round-trip: HAVING, CTE, UNION, arithmetic, INSERT...SELECT, RETURNING, LEFT JOIN
 
 ### Fixed
+- Parser: `=`, `<>`, `>`, `<`, `>=`, `<=` operator right side now parsed as column expression (not literal), fixing JOIN `ON a.id = b.user_id` column-to-column comparisons
 - Parser: `WITH`, `UNION`, `INTERSECT`, `EXCEPT`, `ALL`, `PRIMARY`, `KEY`, `DEFAULT`, `UNIQUE`, `IF`, `EXISTS` keywords now registered in lexer (code existed but unreachable)
 - Parser: Subquery FROM `(SELECT ...)` uses correct rparen token type check
 - Parser: `#parseDelete()` now supports `RETURNING` clause
 - Parser: `#parseDropTable()` now returns proper `dropTable` AST node instead of raw
+- Translator: JOIN column-to-column `$expr` condition added reverse operator mapping (`eq`→`=`, `neq`→`<>`, etc.) for SQL output
+- Translator: SQL JOIN → MongoDB `$lookup` now handles column-to-column `$expr` conditions
 - Lint: 37 ESLint warnings eliminated (unused vars/imports, any types, empty blocks)
 
 ## [v0.3.0-beta.2] — 2026-05-30
