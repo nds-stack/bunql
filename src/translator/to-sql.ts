@@ -1,4 +1,4 @@
-import type { ASTNode, ColumnExpr, Condition, JoinNode, OrderByNode, TableRef } from "../ast/ast.ts";
+import type { ASTNode, ColumnExpr, Condition, JoinNode, OrderByNode, TableRef, ValueExpr, ParamRef } from "../ast/ast.ts";
 
 export interface SQLResult { sql: string; params: unknown[]; }
 export type SQLDialect = "sqlite" | "postgresql" | "mysql";
@@ -27,6 +27,11 @@ function q(name: string, ctx: Ctx): string {
   return ctx.dialect === "mysql" ? `\`${name}\`` : name;
 }
 
+function pushVal(val: ValueExpr, ctx: Ctx): void {
+  if (typeof val === "object" && val !== null && (val as ParamRef).type === "param") return;
+  ctx.params.push(val);
+}
+
 function translateSelect(n: import("../ast/ast.ts").SelectNode, ctx: Ctx): SQLResult {
   let sql = "SELECT ";
   if (n.distinct) sql += "DISTINCT ";
@@ -47,7 +52,7 @@ function translateInsert(n: import("../ast/ast.ts").InsertNode, ctx: Ctx): SQLRe
   const cols = n.columns ?? [];
   const colStr = cols.length > 0 ? ` (${cols.map(c => q(c, ctx)).join(", ")})` : "";
   const valueRows = n.values.map((row) => {
-    ctx.params.push(...row);
+    for (const v of row) pushVal(v, ctx);
     return `(${row.map(() => ph(ctx)).join(", ")})`;
   }).join(", ");
   let sql = `INSERT INTO ${q(n.table, ctx)}${colStr} VALUES ${valueRows}`;
@@ -58,7 +63,12 @@ function translateInsert(n: import("../ast/ast.ts").InsertNode, ctx: Ctx): SQLRe
 function translateUpdate(n: import("../ast/ast.ts").UpdateNode, ctx: Ctx): SQLResult {
   const setClauses = Object.entries(n.set).map(([k, v]) => {
     if (typeof v === "object" && v !== null && "type" in v) {
-      ctx.params.push(colSQL(v as ColumnExpr, ctx));
+      if ((v as ParamRef).type === "param") {
+        const p = v as ParamRef;
+        if (p.index >= 0) ctx.paramIdx = Math.max(ctx.paramIdx, p.index);
+      } else {
+        ctx.params.push(colSQL(v as ColumnExpr, ctx));
+      }
       return `${q(k, ctx)} = ${ph(ctx)}`;
     }
     ctx.params.push(v);
@@ -154,17 +164,29 @@ function joinSQL(join: JoinNode, ctx: Ctx): string {
 
 function condSQL(cond: Condition, ctx: Ctx): string {
   switch (cond.type) {
-    case "eq": ctx.params.push(cond.right); return `${colSQL(cond.left, ctx)} = ${ph(ctx)}`;
-    case "neq": ctx.params.push(cond.right); return `${colSQL(cond.left, ctx)} <> ${ph(ctx)}`;
-    case "gt": ctx.params.push(cond.right); return `${colSQL(cond.left, ctx)} > ${ph(ctx)}`;
-    case "lt": ctx.params.push(cond.right); return `${colSQL(cond.left, ctx)} < ${ph(ctx)}`;
-    case "gte": ctx.params.push(cond.right); return `${colSQL(cond.left, ctx)} >= ${ph(ctx)}`;
-    case "lte": ctx.params.push(cond.right); return `${colSQL(cond.left, ctx)} <= ${ph(ctx)}`;
-    case "like": ctx.params.push(cond.pattern); return `${colSQL(cond.left, ctx)} LIKE ${ph(ctx)}`;
-    case "notLike": ctx.params.push(cond.pattern); return `${colSQL(cond.left, ctx)} NOT LIKE ${ph(ctx)}`;
-    case "between": ctx.params.push(cond.min, cond.max); return `${colSQL(cond.left, ctx)} BETWEEN ${ph(ctx)} AND ${ph(ctx)}`;
-    case "in": ctx.params.push(...cond.values); return `${colSQL(cond.left, ctx)} IN (${cond.values.map(() => ph(ctx)).join(", ")})`;
-    case "notIn": ctx.params.push(...cond.values); return `${colSQL(cond.left, ctx)} NOT IN (${cond.values.map(() => ph(ctx)).join(", ")})`;
+    case "eq": pushVal(cond.right, ctx); return `${colSQL(cond.left, ctx)} = ${ph(ctx)}`;
+    case "neq": pushVal(cond.right, ctx); return `${colSQL(cond.left, ctx)} <> ${ph(ctx)}`;
+    case "gt": pushVal(cond.right, ctx); return `${colSQL(cond.left, ctx)} > ${ph(ctx)}`;
+    case "lt": pushVal(cond.right, ctx); return `${colSQL(cond.left, ctx)} < ${ph(ctx)}`;
+    case "gte": pushVal(cond.right, ctx); return `${colSQL(cond.left, ctx)} >= ${ph(ctx)}`;
+    case "lte": pushVal(cond.right, ctx); return `${colSQL(cond.left, ctx)} <= ${ph(ctx)}`;
+    case "like": {
+      pushVal(cond.pattern, ctx);
+      if (cond.flags?.includes("i")) return `LOWER(${colSQL(cond.left, ctx)}) LIKE LOWER(${ph(ctx)})`;
+      return `${colSQL(cond.left, ctx)} LIKE ${ph(ctx)}`;
+    }
+    case "notLike": {
+      pushVal(cond.pattern, ctx);
+      if (cond.flags?.includes("i")) return `LOWER(${colSQL(cond.left, ctx)}) NOT LIKE LOWER(${ph(ctx)})`;
+      return `${colSQL(cond.left, ctx)} NOT LIKE ${ph(ctx)}`;
+    }
+    case "mod":
+      pushVal(cond.divisor, ctx);
+      pushVal(cond.remainder, ctx);
+      return `${colSQL(cond.left, ctx)} % ${ph(ctx)} = ${ph(ctx)}`;
+    case "between": pushVal(cond.min, ctx); pushVal(cond.max, ctx); return `${colSQL(cond.left, ctx)} BETWEEN ${ph(ctx)} AND ${ph(ctx)}`;
+    case "in": for (const v of cond.values) pushVal(v, ctx); return `${colSQL(cond.left, ctx)} IN (${cond.values.map(() => ph(ctx)).join(", ")})`;
+    case "notIn": for (const v of cond.values) pushVal(v, ctx); return `${colSQL(cond.left, ctx)} NOT IN (${cond.values.map(() => ph(ctx)).join(", ")})`;
     case "isNull": return `${colSQL(cond.left, ctx)} IS NULL`;
     case "isNotNull": return `${colSQL(cond.left, ctx)} IS NOT NULL`;
     case "and": return cond.conditions.length > 0 ? cond.conditions.map(c => `(${condSQL(c, ctx)})`).join(" AND ") : "1=1";

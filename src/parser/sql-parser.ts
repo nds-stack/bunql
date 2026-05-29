@@ -3,7 +3,7 @@
  * @description Hand-written recursive descent SQL parser — tokens → Universal AST.
  */
 import { Lexer, type Token } from "./sql-lexer.ts";
-import type { ASTNode, ColumnExpr, Condition, JoinNode, Literal, OrderByNode, SelectNode, TableRef } from "../ast/ast.ts";
+import type { ASTNode, ColumnExpr, Condition, JoinNode, OrderByNode, SelectNode, TableRef, ValueExpr } from "../ast/ast.ts";
 import { ParseError } from "../errors/parse-error.ts";
 
 export { ParseError };
@@ -17,6 +17,7 @@ export function parseSQL(sql: string): ASTNode {
 class Parser {
   #lex: Lexer;
   #current: Token;
+  #paramIndex = 0;
 
   constructor(lex: Lexer) {
     this.#lex = lex;
@@ -24,6 +25,7 @@ class Parser {
   }
 
   parse(): ASTNode {
+    this.#paramIndex = 0;
     const kw = this.#current.value;
 
     switch (kw) {
@@ -62,11 +64,11 @@ class Parser {
     const columns = this.#match("(") ? (() => { const cols = this.#parseColumnList(); this.#expect(")"); return cols; })() : undefined;
     this.#expect("values");
 
-    const values: Literal[][] = [];
+    const values: ValueExpr[][] = [];
     do {
       if (this.#current.value === ",") this.#advance();
       this.#expect("(");
-      const row: Literal[] = [];
+      const row: ValueExpr[] = [];
       do {
         if (this.#current.value === ",") this.#advance();
         row.push(this.#parseLiteral());
@@ -87,7 +89,7 @@ class Parser {
     this.#expect("update");
     const table = this.#parseIdentifier();
     this.#expect("set");
-    const set: Record<string, Literal> = {};
+    const set: Record<string, ValueExpr> = {};
     do {
       if (this.#current.type === "comma") this.#advance();
       const col = this.#parseIdentifier();
@@ -243,13 +245,13 @@ class Parser {
     }
 
     if (this.#match("like")) {
-      const pattern = this.#current.value; this.#advance();
+      const pattern = this.#parseLiteral();
       return { type: "like", left, pattern };
     }
 
     if (this.#match("not")) {
       this.#expect("like");
-      const pattern = this.#current.value; this.#advance();
+      const pattern = this.#parseLiteral();
       return { type: "notLike", left, pattern };
     }
 
@@ -266,7 +268,7 @@ class Parser {
     if (negate || this.#current.value === "(") {
       // We parsed "in" or "not in" — now expect values in parens
       this.#expect("(");
-      const values: Literal[] = [];
+      const values: ValueExpr[] = [];
       do {
         if (this.#current.value === ",") this.#advance();
         values.push(this.#parseLiteral());
@@ -323,7 +325,14 @@ class Parser {
     return this.#parseLimit();
   }
 
-  #parseLiteral(): Literal {
+  #parseLiteral(): ValueExpr {
+    if (this.#current.type === "param") {
+      const val = this.#current.value;
+      this.#advance();
+      if (val === "?") return { type: "param", index: this.#paramIndex++ };
+      const idx = /^\d+$/.test(val.slice(1)) ? parseInt(val.slice(1), 10) - 1 : this.#paramIndex++;
+      return { type: "param", index: idx };
+    }
     if (this.#current.type === "string") { const v = this.#current.value; this.#advance(); return v; }
     if (this.#current.type === "number") { const v = Number(this.#current.value); this.#advance(); return v; }
     if (this.#match("true")) return true;
@@ -331,8 +340,8 @@ class Parser {
     if (this.#match("null")) return null;
     return this.#parseIdentifier();
   }
-  #parseLiteralList(): Literal[] {
-    const items: Literal[] = [];
+  #parseLiteralList(): ValueExpr[] {
+    const items: ValueExpr[] = [];
     do {
       if (this.#current.value === ",") this.#advance();
       items.push(this.#parseLiteral());

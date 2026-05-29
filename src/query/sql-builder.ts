@@ -6,7 +6,7 @@
 import { parseSQL } from "../parser/sql-parser.ts";
 import { ParseError } from "../parser/sql-parser.ts";
 import { astToSQL } from "../translator/to-sql.ts";
-import type { RelationMap, RelationsResult } from "./relations/relations.ts";
+import type { RelationMap, RelationsResult, QueryExecutor as RelationsExecutor } from "./relations/relations.ts";
 import { fetchOne, fetchMany } from "./relations/relations.ts";
 
 export interface QueryResult {
@@ -109,12 +109,12 @@ export class RelationsQuery<T extends Record<string, unknown>, R extends Relatio
 
   async all(): Promise<RelationsResult<T, R>[]> {
     const executor = this.#parent._executor;
-    return fetchMany(executor as never, this.#parent.sql, this.#parent.params, this.#relations) as unknown as RelationsResult<T, R>[];
+    return await fetchMany(executor as RelationsExecutor, this.#parent.sql, this.#parent.params, this.#relations) as RelationsResult<T, R>[];
   }
 
   async get(): Promise<RelationsResult<T, R> | null> {
     const executor = this.#parent._executor;
-    return fetchOne(executor as never, this.#parent.sql, this.#parent.params, this.#relations) as unknown as RelationsResult<T, R> | null;
+    return await fetchOne(executor as RelationsExecutor, this.#parent.sql, this.#parent.params, this.#relations) as RelationsResult<T, R> | null;
   }
 }
 

@@ -60,14 +60,14 @@ export class MongoDriver implements DriverAdapter {
 
   async query(sql: string, params?: unknown[]): Promise<QueryResult> {
     const node = parseSQL(sql);
-    const command = astToMongo(node);
+    const command = astToMongo(node, params ?? []);
     const result = await this.#executeCommand(command);
     return this.#toQueryResult(result, command);
   }
 
   async run(sql: string, params?: unknown[]): Promise<RunResult> {
     const node = parseSQL(sql);
-    const command = astToMongo(node);
+    const command = astToMongo(node, params ?? []);
     const result = await this.#executeCommand(command);
     return this.#toRunResult(result);
   }

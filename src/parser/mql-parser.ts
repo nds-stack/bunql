@@ -71,7 +71,21 @@ function parseAggregate(collection: string, pipeline: Record<string, unknown>[])
       case "$skip": return { stage: "skip", count: value as number };
       case "$project": return { stage: "project", fields: value as Record<string, number | string | boolean> };
       case "$lookup": return parseLookupStage(value as Record<string, string>);
-      case "$unwind": return { stage: "unwind", path: value as string };
+      case "$unwind": {
+        if (typeof value === "string") {
+          return { stage: "unwind", path: value.replace(/^\$/, "") };
+        }
+        if (typeof value === "object" && value !== null) {
+          const obj = value as Record<string, unknown>;
+          return {
+            stage: "unwind",
+            path: String(obj.path ?? "").replace(/^\$/, ""),
+            preserveNullAndEmptyArrays: obj.preserveNullAndEmptyArrays === true,
+            includeArrayIndex: typeof obj.includeArrayIndex === "string" ? obj.includeArrayIndex.replace(/^\$/, "") : undefined,
+          };
+        }
+        return { stage: "unwind", path: "" };
+      }
       default: return { stage: "limit", count: 0 };
     }
   });
@@ -167,7 +181,8 @@ function mqlOperator(col: ColumnExpr, ops: Record<string, unknown>): Condition {
   const hasRegex = ops.$regex !== undefined;
   if (hasRegex) {
     const pattern = String(ops.$regex);
-    return { type: "like" as const, left: col, pattern };
+    const flags = typeof ops.$options === "string" ? ops.$options : undefined;
+    return { type: "like" as const, left: col, pattern, flags };
   }
 
   const conditions: (Condition | null)[] = entries.map(([op, val]) => {
@@ -180,8 +195,9 @@ function mqlOperator(col: ColumnExpr, ops: Record<string, unknown>): Condition {
       case "$lte": return { type: "lte" as const, left: col, right: val as Literal };
       case "$in": return { type: "in" as const, left: col, values: (val as Literal[]) };
       case "$nin": return { type: "notIn" as const, left: col, values: (val as Literal[]) };
-      case "$regex": return null; // handled above
-      case "$options": return null; // handled above with $regex
+      case "$regex":
+      case "$options":
+        return null;
       case "$exists": return val
         ? { type: "isNotNull" as const, left: col }
         : { type: "isNull" as const, left: col };
@@ -189,7 +205,13 @@ function mqlOperator(col: ColumnExpr, ops: Record<string, unknown>): Condition {
       case "$or": return { type: "or" as const, conditions: (val as Record<string, unknown>[]).map((o) => mqlToCondition(o)) };
       case "$nor": return { type: "and" as const, conditions: (val as Record<string, unknown>[]).map((o) => ({ type: "not" as const, condition: mqlToCondition(o) })) };
       case "$not": return { type: "not" as const, condition: mqlToCondition(val as Record<string, unknown>) };
-      case "$mod": return { type: "eq" as const, left: col, right: (val as unknown[])?.join("_mod_") as Literal }; // approximate
+      case "$mod": {
+        const arr = val as unknown[];
+        if (Array.isArray(arr) && arr.length === 2) {
+          return { type: "mod" as const, left: col, divisor: arr[0] as Literal, remainder: arr[1] as Literal };
+        }
+        return { type: "eq" as const, left: col, right: null };
+      }
       case "$all": {
         const allVals = val as Literal[];
         if (allVals.length === 1) return { type: "eq" as const, left: col, right: allVals[0]! };

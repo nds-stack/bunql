@@ -19,18 +19,25 @@ export interface SelectNode {
   distinct?: boolean;
 }
 
+export interface ParamRef {
+  type: "param";
+  index: number;
+}
+
+export type ValueExpr = Literal | ParamRef;
+
 export interface InsertNode {
   type: "insert";
   table: string;
   columns?: string[];
-  values: Literal[][];
+  values: ValueExpr[][];
   returning?: string[];
 }
 
 export interface UpdateNode {
   type: "update";
   table: string;
-  set: Record<string, Literal | ColumnExpr>;
+  set: Record<string, ValueExpr | ColumnExpr>;
   where?: Condition;
   returning?: string[];
 }
@@ -61,7 +68,7 @@ export type AggregateStage =
   | { stage: "skip"; count: number }
   | { stage: "project"; fields: Record<string, number | string | boolean> }
   | { stage: "lookup"; from: string; localField: string; foreignField: string; as: string }
-  | { stage: "unwind"; path: string };
+  | { stage: "unwind"; path: string; preserveNullAndEmptyArrays?: boolean; includeArrayIndex?: string };
 
 export type Accumulator = { func: "sum" | "avg" | "min" | "max" | "count" | "push"; field: string };
 
@@ -102,24 +109,26 @@ export type Condition =
   | EqCondition | NeqCondition | GtCondition | LtCondition | GteCondition | LteCondition
   | AndCondition | OrCondition | NotCondition
   | LikeCondition | NotLikeCondition
+  | ModCondition
   | InCondition | NotInCondition
   | BetweenCondition
   | IsNullCondition | IsNotNullCondition;
 
-export interface EqCondition   { type: "eq";   left: ColumnExpr; right: Literal; }
-export interface NeqCondition  { type: "neq";  left: ColumnExpr; right: Literal; }
-export interface GtCondition   { type: "gt";   left: ColumnExpr; right: Literal; }
-export interface LtCondition   { type: "lt";   left: ColumnExpr; right: Literal; }
-export interface GteCondition  { type: "gte";  left: ColumnExpr; right: Literal; }
-export interface LteCondition  { type: "lte";  left: ColumnExpr; right: Literal; }
+export interface EqCondition   { type: "eq";   left: ColumnExpr; right: ValueExpr; }
+export interface NeqCondition  { type: "neq";  left: ColumnExpr; right: ValueExpr; }
+export interface GtCondition   { type: "gt";   left: ColumnExpr; right: ValueExpr; }
+export interface LtCondition   { type: "lt";   left: ColumnExpr; right: ValueExpr; }
+export interface GteCondition  { type: "gte";  left: ColumnExpr; right: ValueExpr; }
+export interface LteCondition  { type: "lte";  left: ColumnExpr; right: ValueExpr; }
 export interface AndCondition  { type: "and";  conditions: Condition[]; }
 export interface OrCondition   { type: "or";   conditions: Condition[]; }
 export interface NotCondition  { type: "not";  condition: Condition; }
-export interface LikeCondition { type: "like"; left: ColumnExpr; pattern: string; }
-export interface NotLikeCondition { type: "notLike"; left: ColumnExpr; pattern: string; }
-export interface InCondition   { type: "in";   left: ColumnExpr; values: Literal[]; }
-export interface NotInCondition { type: "notIn"; left: ColumnExpr; values: Literal[]; }
-export interface BetweenCondition { type: "between"; left: ColumnExpr; min: Literal; max: Literal; }
+export interface LikeCondition { type: "like"; left: ColumnExpr; pattern: ValueExpr; flags?: string; }
+export interface NotLikeCondition { type: "notLike"; left: ColumnExpr; pattern: ValueExpr; flags?: string; }
+export interface ModCondition { type: "mod"; left: ColumnExpr; divisor: ValueExpr; remainder: ValueExpr; }
+export interface InCondition   { type: "in";   left: ColumnExpr; values: ValueExpr[]; }
+export interface NotInCondition { type: "notIn"; left: ColumnExpr; values: ValueExpr[]; }
+export interface BetweenCondition { type: "between"; left: ColumnExpr; min: ValueExpr; max: ValueExpr; }
 export interface IsNullCondition { type: "isNull"; left: ColumnExpr; }
 export interface IsNotNullCondition { type: "isNotNull"; left: ColumnExpr; }
 
@@ -147,7 +156,7 @@ export function table(name: string, alias?: string): TableRef {
   return { name, alias };
 }
 
-export function eq(left: ColumnExpr, right: Literal): EqCondition {
+export function eq(left: ColumnExpr, right: ValueExpr): EqCondition {
   return { type: "eq", left, right };
 }
 

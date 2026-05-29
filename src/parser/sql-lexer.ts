@@ -10,7 +10,7 @@ export interface Token {
 }
 
 export type TokenType =
-  | "keyword" | "identifier" | "number" | "string" | "operator"
+  | "keyword" | "identifier" | "number" | "string" | "operator" | "param"
   | "comma" | "dot" | "semicolon" | "lparen" | "rparen" | "eof";
 
 const KEYWORDS = new Set([
@@ -43,7 +43,7 @@ export class Lexer {
     if (ch === "(") { this.#pos++; return { type: "lparen", value: "(", pos: this.#pos - 1 }; }
     if (ch === ")") { this.#pos++; return { type: "rparen", value: ")", pos: this.#pos - 1 }; }
     if (/[+\-*/%=<>!|]/.test(ch)) return this.#readOp();
-    if (ch === "?") { this.#pos++; return { type: "operator", value: "?", pos: this.#pos - 1 }; }
+    if (ch === "?") { this.#pos++; return { type: "param", value: "?", pos: this.#pos - 1 }; }
     if (/\d/.test(ch)) return this.#readNum();
     if (ch === "$" || ch === "@" || ch === ":") return this.#readParam();
     if (/[a-zA-Z_]/.test(ch)) return this.#readWord();
@@ -112,7 +112,7 @@ export class Lexer {
   #readParam(): Token {
     const start = this.#pos; this.#adv();
     while (this.#pos < this.#input.length && /[a-zA-Z0-9_]/.test(this.#ch())) this.#adv();
-    return { type: "operator", value: this.#input.slice(start, this.#pos), pos: start };
+    return { type: "param", value: this.#input.slice(start, this.#pos), pos: start };
   }
 
   #skipWS(): void {

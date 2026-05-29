@@ -1,4 +1,4 @@
-import type { ASTNode, ColumnExpr, Condition, InsertNode, OrderByNode, SelectNode, UpdateNode, DeleteNode, Literal } from "../ast/ast.ts";
+import type { ASTNode, ColumnExpr, Condition, InsertNode, OrderByNode, SelectNode, UpdateNode, DeleteNode, ParamRef, ValueExpr } from "../ast/ast.ts";
 
 export interface MongoCommand {
   collection: string;
@@ -6,19 +6,33 @@ export interface MongoCommand {
   args: unknown[];
 }
 
-export function astToMongo(node: ASTNode): MongoCommand {
+export function astToMongo(node: ASTNode, params: unknown[] = []): MongoCommand {
   switch (node.type) {
-    case "select": return translateSelect(node);
-    case "insert": return translateInsert(node);
-    case "update": return translateUpdate(node);
-    case "delete": return translateDelete(node);
-    case "aggregate": return translateAggregate(node);
+    case "select": return translateSelect(node, params);
+    case "insert": return translateInsert(node, params);
+    case "update": return translateUpdate(node, params);
+    case "delete": return translateDelete(node, params);
+    case "aggregate": return translateAggregate(node, params);
     case "raw": return { collection: "", method: "find", args: [node.sql] };
     default: throw new Error(`Unsupported AST node for MongoDB: ${(node as ASTNode).type}`);
   }
 }
 
-function translateSelect(n: SelectNode): MongoCommand {
+function isParamRef(v: unknown): v is ParamRef {
+  return typeof v === "object" && v !== null && (v as ParamRef).type === "param";
+}
+
+function resolveValue(val: ValueExpr, params: unknown[]): unknown {
+  if (isParamRef(val)) {
+    if (val.index < 0 || val.index >= params.length) {
+      throw new Error(`Missing parameter at index ${val.index}`);
+    }
+    return params[val.index];
+  }
+  return val;
+}
+
+function translateSelect(n: SelectNode, params: unknown[]): MongoCommand {
   const collection = typeof n.from === "string" ? n.from : n.from.name;
   if (typeof n.from !== "string" && n.from.subquery) {
     throw new Error("Subqueries in FROM are not supported for MongoDB.");
@@ -42,7 +56,7 @@ function translateSelect(n: SelectNode): MongoCommand {
       }
     }
 
-    if (n.where) pipeline.push({ $match: condToMQL(n.where) });
+    if (n.where) pipeline.push({ $match: condToMQL(n.where, params) });
 
     if (hasGroup || hasDistinct || hasAggrFunc) {
       const groupStage: Record<string, unknown> = {};
@@ -73,10 +87,9 @@ function translateSelect(n: SelectNode): MongoCommand {
       pipeline.push({ $group: groupStage });
     }
 
-    if (n.having) pipeline.push({ $match: condToMQL(n.having) });
+    if (n.having) pipeline.push({ $match: condToMQL(n.having, params) });
     if (n.orderBy) pipeline.push({ $sort: orderByToMQL(n.orderBy) });
 
-    // $project to shape output
     if ((hasGroup || hasAggrFunc || hasDistinct) && n.columns.some(c => c.type !== "wildcard")) {
       const proj: Record<string, number> = { _id: 0 };
       for (const c of n.columns) {
@@ -93,7 +106,7 @@ function translateSelect(n: SelectNode): MongoCommand {
   }
 
   // Simple find
-  const filter = n.where ? condToMQL(n.where) : {};
+  const filter = n.where ? condToMQL(n.where, params) : {};
   const projection: Record<string, number> = {};
   let hasCols = false;
   for (const col of n.columns) {
@@ -112,45 +125,51 @@ function translateSelect(n: SelectNode): MongoCommand {
   return { collection, method: "find", args: [filter, Object.keys(options).length > 0 ? options : undefined].filter(Boolean) };
 }
 
-function translateInsert(n: InsertNode): MongoCommand {
+function translateInsert(n: InsertNode, params: unknown[]): MongoCommand {
   const cols = n.columns;
+  const resolve = (v: ValueExpr) => resolveValue(v, params);
   if (n.values.length === 1 && cols) {
     const doc: Record<string, unknown> = {};
-    for (let i = 0; i < cols.length; i++) doc[cols[i]!] = n.values[0]![i];
+    for (let i = 0; i < cols.length; i++) doc[cols[i]!] = resolve(n.values[0]![i]!);
     return { collection: n.table, method: "insertOne", args: [doc] };
   }
   if (n.values.length === 1 && !cols) {
-    // INSERT INTO t VALUES (...) — map by position
     const doc: Record<string, unknown> = {};
-    n.values[0]!.forEach((v, i) => doc[String(i)] = v);
+    n.values[0]!.forEach((v, i) => doc[String(i)] = resolve(v));
     return { collection: n.table, method: "insertOne", args: [doc] };
   }
   const docs = n.values.map((row) => {
     const doc: Record<string, unknown> = {};
-    if (cols) for (let i = 0; i < cols.length; i++) doc[cols[i]!] = row[i];
-    else row.forEach((v, i) => doc[String(i)] = v);
+    if (cols) for (let i = 0; i < cols.length; i++) doc[cols[i]!] = resolve(row[i]!);
+    else row.forEach((v, i) => doc[String(i)] = resolve(v));
     return doc;
   });
   return { collection: n.table, method: "insertMany", args: [docs] };
 }
 
-function translateUpdate(n: UpdateNode): MongoCommand {
-  const filter = n.where ? condToMQL(n.where) : {};
+function translateUpdate(n: UpdateNode, params: unknown[]): MongoCommand {
+  const filter = n.where ? condToMQL(n.where, params) : {};
   const set: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(n.set)) set[k] = v;
+  for (const [k, v] of Object.entries(n.set)) {
+    if (isParamRef(v)) {
+      set[k] = resolveValue(v, params);
+    } else {
+      set[k] = v;
+    }
+  }
   return { collection: n.table, method: "updateMany", args: [filter, { $set: set }] };
 }
 
-function translateDelete(n: DeleteNode): MongoCommand {
-  const filter = n.where ? condToMQL(n.where) : {};
+function translateDelete(n: DeleteNode, params: unknown[]): MongoCommand {
+  const filter = n.where ? condToMQL(n.where, params) : {};
   return { collection: n.table, method: "deleteMany", args: [filter] };
 }
 
-function translateAggregate(n: import("../ast/ast.ts").AggregateNode): MongoCommand {
+function translateAggregate(n: import("../ast/ast.ts").AggregateNode, params: unknown[]): MongoCommand {
   const pipeline: Record<string, unknown>[] = [];
   for (const stage of n.pipeline) {
     switch (stage.stage) {
-      case "match": pipeline.push({ $match: condToMQL(stage.condition) }); break;
+      case "match": pipeline.push({ $match: condToMQL(stage.condition, params) }); break;
       case "group": {
         const gs: Record<string, unknown> = { _id: stage.id ?? null };
         for (const [k, acc] of Object.entries(stage.accumulators)) {
@@ -164,30 +183,52 @@ function translateAggregate(n: import("../ast/ast.ts").AggregateNode): MongoComm
       case "skip": pipeline.push({ $skip: stage.count }); break;
       case "project": pipeline.push({ $project: stage.fields }); break;
       case "lookup": pipeline.push({ $lookup: { from: stage.from, localField: stage.localField, foreignField: stage.foreignField, as: stage.as } }); break;
-      case "unwind": pipeline.push({ $unwind: `$${stage.path}` }); break;
+      case "unwind": {
+        if (stage.preserveNullAndEmptyArrays !== undefined || stage.includeArrayIndex !== undefined) {
+          const unwindObj: Record<string, unknown> = { path: `$${stage.path}` };
+          if (stage.preserveNullAndEmptyArrays !== undefined) unwindObj.preserveNullAndEmptyArrays = stage.preserveNullAndEmptyArrays;
+          if (stage.includeArrayIndex !== undefined) unwindObj.includeArrayIndex = `$${stage.includeArrayIndex}`;
+          pipeline.push({ $unwind: unwindObj });
+        } else {
+          pipeline.push({ $unwind: `$${stage.path}` });
+        }
+        break;
+      }
     }
   }
   return { collection: n.table, method: "aggregate", args: [pipeline] };
 }
 
-function condToMQL(cond: Condition): Record<string, unknown> {
+function condToMQL(cond: Condition, params: unknown[]): Record<string, unknown> {
   switch (cond.type) {
-    case "eq": return { [colName(cond.left)]: cond.right };
-    case "neq": return { [colName(cond.left)]: { $ne: cond.right } };
-    case "gt": return { [colName(cond.left)]: { $gt: cond.right } };
-    case "lt": return { [colName(cond.left)]: { $lt: cond.right } };
-    case "gte": return { [colName(cond.left)]: { $gte: cond.right } };
-    case "lte": return { [colName(cond.left)]: { $lte: cond.right } };
-    case "like": return { [colName(cond.left)]: { $regex: cond.pattern } };
-    case "notLike": return { [colName(cond.left)]: { $not: { $regex: cond.pattern } } };
-    case "between": return { [colName(cond.left)]: { $gte: cond.min, $lte: cond.max } };
-    case "in": return { [colName(cond.left)]: { $in: cond.values } };
-    case "notIn": return { [colName(cond.left)]: { $nin: cond.values } };
+    case "eq": return { [colName(cond.left)]: resolveValue(cond.right, params) };
+    case "neq": return { [colName(cond.left)]: { $ne: resolveValue(cond.right, params) } };
+    case "gt": return { [colName(cond.left)]: { $gt: resolveValue(cond.right, params) } };
+    case "lt": return { [colName(cond.left)]: { $lt: resolveValue(cond.right, params) } };
+    case "gte": return { [colName(cond.left)]: { $gte: resolveValue(cond.right, params) } };
+    case "lte": return { [colName(cond.left)]: { $lte: resolveValue(cond.right, params) } };
+    case "like": {
+      const base: Record<string, unknown> = { $regex: String(resolveValue(cond.pattern, params)) };
+      if (cond.flags) base.$options = cond.flags;
+      return { [colName(cond.left)]: base };
+    }
+    case "notLike": {
+      const inner: Record<string, unknown> = { $regex: String(resolveValue(cond.pattern, params)) };
+      if (cond.flags) inner.$options = cond.flags;
+      return { [colName(cond.left)]: { $not: inner } };
+    }
+    case "mod":
+      return {
+        [colName(cond.left)]: { $mod: [resolveValue(cond.divisor, params), resolveValue(cond.remainder, params)] },
+      };
+    case "between": return { [colName(cond.left)]: { $gte: resolveValue(cond.min, params), $lte: resolveValue(cond.max, params) } };
+    case "in": return { [colName(cond.left)]: { $in: cond.values.map(v => resolveValue(v, params)) } };
+    case "notIn": return { [colName(cond.left)]: { $nin: cond.values.map(v => resolveValue(v, params)) } };
     case "isNull": return { [colName(cond.left)]: null };
     case "isNotNull": return { [colName(cond.left)]: { $ne: null } };
-    case "and": return cond.conditions.length === 0 ? {} : { $and: cond.conditions.map(c => condToMQL(c)) };
-    case "or": return cond.conditions.length === 0 ? {} : { $or: cond.conditions.map(c => condToMQL(c)) };
-    case "not": return { $nor: [condToMQL(cond.condition)] };
+    case "and": return cond.conditions.length === 0 ? {} : { $and: cond.conditions.map(c => condToMQL(c, params)) };
+    case "or": return cond.conditions.length === 0 ? {} : { $or: cond.conditions.map(c => condToMQL(c, params)) };
+    case "not": return { $nor: [condToMQL(cond.condition, params)] };
     default: return {};
   }
 }
