@@ -230,6 +230,7 @@ class Parser {
 
   #parseColumns(): ColumnExpr[] {
     if (this.#current.value === "*") { this.#advance(); return [{ type: "wildcard" }]; }
+    if (this.#current.value === ")") return []; // Empty arg list for functions like ROW_NUMBER()
     const cols: ColumnExpr[] = [];
     do {
       if (this.#current.value === ",") this.#advance();
@@ -239,6 +240,42 @@ class Parser {
   }
 
   #parseColumnExpr(): ColumnExpr {
+    // CASE expression: CASE [value] WHEN ... THEN ... [ELSE ...] END
+    const curVal = this.#current.value;
+    if (curVal === "case") {
+      this.#advance();
+      const nextVal = this.#current.value;
+      let caseValue: ColumnExpr | undefined;
+      // If next token is not WHEN, it's a simple CASE with value expression
+      if ((nextVal as string) !== "when") {
+        caseValue = this.#parseColumnExpr();
+      }
+
+      const branches: { when: ColumnExpr | Condition; then: ValueExpr }[] = [];
+      while (this.#match("when")) {
+        const whenExpr = caseValue
+          ? this.#parseColumnExpr()  // Simple: WHEN literal/value
+          : this.#parseOr();          // Searched: WHEN condition
+        this.#expect("then");
+        const thenExpr = this.#parseColumnExpr();  // Use parseColumnExpr for nested CASE support
+        branches.push({ when: whenExpr, then: thenExpr.value ?? thenExpr as unknown as ValueExpr });
+      }
+
+      let elseExpr: ValueExpr | undefined;
+      if (this.#match("else")) {
+        const e = this.#parseColumnExpr();
+        elseExpr = e.value ?? e as unknown as ValueExpr;
+      }
+      this.#expect("end");
+
+      let alias: string | undefined;
+      if (this.#match("as") || this.#current.type === "identifier") {
+        alias = this.#parseIdentifier();
+      }
+
+      return { type: "case", caseValue, branches, else: elseExpr, alias } as ColumnExpr;
+    }
+
     if (this.#current.type === "string") {
       const v = this.#current.value; this.#advance();
       return { type: "literal", value: v };
@@ -257,6 +294,22 @@ class Parser {
       const args = this.#parseColumns();
       this.#expect(")");
       expr = { type: "function", func, args, ...(distinct ? { distinct: true } : {}) };
+
+      // OVER clause for window functions
+      if (this.#match("over")) {
+        this.#expect("(");
+        let partitionBy: ColumnExpr[] | undefined;
+        if (this.#match("partition")) {
+          this.#expect("by");
+          partitionBy = this.#parseColumns();
+        }
+        let orderBy: import("../ast/ast.ts").OrderByNode[] | undefined;
+        if (this.#match("order")) {
+          orderBy = this.#parseOrderBy();
+        }
+        this.#expect(")");
+        (expr as import("../ast/ast.ts").ColumnExpr).over = { partitionBy, orderBy };
+      }
     } else {
       const name = this.#parseIdentifier();
       expr = { type: "column", name };
@@ -378,6 +431,23 @@ class Parser {
       return cond;
     }
 
+    // EXISTS / NOT EXISTS: subquery (check before NOT token consumption)
+    if (this.#current.value === "exists") {
+      this.#advance();
+      this.#expect("(");
+      const subquery = this.#parseSelect();
+      this.#expect(")");
+      return { type: "exists", subquery } as Condition;
+    }
+    if (this.#current.value === "not" && this.#lex.peek().value === "exists") {
+      this.#advance(); // consume "not"
+      this.#advance(); // consume "exists"
+      this.#expect("(");
+      const subquery = this.#parseSelect();
+      this.#expect(")");
+      return { type: "notExists", subquery } as Condition;
+    }
+
     const left = this.#parseColumnExpr();
 
     if (this.#match("is")) {
@@ -391,25 +461,38 @@ class Parser {
       return { type: "like", left, pattern };
     }
 
+    let negateIn = false; // for NOT IN tracking
     if (this.#match("not")) {
-      this.#expect("like");
-      const pattern = this.#parseLiteral();
-      return { type: "notLike", left, pattern };
+      if (this.#current.value === "in") {
+        // NOT IN — consume "in" and fall through to IN handling
+        this.#advance();
+        negateIn = true;
+      } else {
+        // NOT LIKE
+        this.#expect("like");
+        const pattern = this.#parseLiteral();
+        return { type: "notLike", left, pattern };
+      }
     }
 
-    let negate = false;
-    if (this.#match("in")) {
-      // negate stays false
-    } else if (this.#match("not")) {
-      this.#expect("in");
-      negate = true;
-    } else {
-      // fall through to operator parsing
+    let negate = negateIn;
+    if (!negateIn && this.#match("in")) {
+      // negate stays false (positive IN)
     }
 
     if (negate || this.#current.value === "(") {
-      // We parsed "in" or "not in" — now expect values in parens
+      // We parsed "in" or "not in" — now check for subquery vs literal list
       this.#expect("(");
+
+      // Peek: if the token after ( is SELECT → subquery, else → literal list
+      if (this.#current.value === "select") {
+        const subquery = this.#parseSelect();
+        this.#expect(")");
+        return negate
+          ? { type: "notInSubquery", left, subquery } as Condition
+          : { type: "inSubquery", left, subquery } as Condition;
+      }
+
       const values: ValueExpr[] = [];
       do {
         if (this.#current.value === ",") this.#advance();
@@ -425,6 +508,11 @@ class Parser {
       this.#expect("and");
       const max = this.#parseLiteral();
       return { type: "between", left, min, max };
+    }
+
+    // CASE boundaries: WHEN condition without explicit operator → treat as eq true
+    if (["then", "else", "end"].includes(this.#current.value)) {
+      return { type: "eq", left, right: true as ValueExpr };
     }
 
     const op = this.#parseOperator();

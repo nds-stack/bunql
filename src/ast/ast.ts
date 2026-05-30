@@ -121,7 +121,7 @@ export type ComputedExpr = {
 export type Accumulator = { func: "sum" | "avg" | "min" | "max" | "count" | "push" | "addToSet" | "first" | "last"; field: string };
 
 export interface ColumnExpr {
-  type: "column" | "alias" | "wildcard" | "literal" | "function" | "binary";
+  type: "column" | "alias" | "wildcard" | "literal" | "function" | "binary" | "case";
   name?: string;
   table?: string;
   alias?: string;
@@ -132,6 +132,17 @@ export interface ColumnExpr {
   left?: ColumnExpr;
   right?: ColumnExpr;
   op?: string;
+  // CASE expression
+  caseValue?: ColumnExpr;
+  branches?: { when: ColumnExpr | Condition; then: ValueExpr }[];
+  else?: ValueExpr;
+  // Window function
+  over?: OverClause;
+}
+
+export interface OverClause {
+  partitionBy?: ColumnExpr[];
+  orderBy?: OrderByNode[];
 }
 
 export interface TableRef {
@@ -163,6 +174,7 @@ export type Condition =
   | AllCondition
   | SizeCondition | TypeCheckCondition
   | InCondition | NotInCondition
+  | InSubqueryCondition | ExistsCondition
   | BetweenCondition
   | IsNullCondition | IsNotNullCondition;
 
@@ -188,6 +200,8 @@ export interface NotInCondition { type: "notIn"; left: ColumnExpr; values: Value
 export interface BetweenCondition { type: "between"; left: ColumnExpr; min: ValueExpr; max: ValueExpr; }
 export interface IsNullCondition { type: "isNull"; left: ColumnExpr; }
 export interface IsNotNullCondition { type: "isNotNull"; left: ColumnExpr; }
+export interface InSubqueryCondition { type: "inSubquery" | "notInSubquery"; left: ColumnExpr; subquery: SelectNode; }
+export interface ExistsCondition { type: "exists" | "notExists"; subquery: SelectNode; }
 
 export function col(name: string, table?: string): ColumnExpr {
   return { type: "column", name, table };

@@ -293,8 +293,36 @@ function colSQL(col: ColumnExpr, ctx: Ctx): string {
       return col.alias ? `${inner} AS ${col.alias}` : inner;
     }
     case "literal": return ph(ctx);
-    case "function": return `${col.func?.toUpperCase()}(${col.distinct ? "DISTINCT " : ""}${(col.args ?? []).map(a => colSQL(a, ctx)).join(", ")})`;
+    case "function": {
+      let sql = `${col.func?.toUpperCase()}(${col.distinct ? "DISTINCT " : ""}${(col.args ?? []).map(a => colSQL(a, ctx)).join(", ")})`;
+      if (col.over) {
+        sql += " OVER (";
+        if (col.over.partitionBy) sql += `PARTITION BY ${col.over.partitionBy.map(p => colSQL(p, ctx)).join(", ")} `;
+        if (col.over.orderBy) sql += `ORDER BY ${col.over.orderBy.map(o => `${colSQL(o.column, ctx)} ${o.direction.toUpperCase()}`).join(", ")} `;
+        sql += ")";
+      }
+      if (col.alias) sql += ` AS ${q(col.alias, ctx)}`;
+      return sql;
+    }
     case "binary": return `(${colSQL(col.left!, ctx)} ${col.op} ${colSQL(col.right!, ctx)})`;
+    case "case": {
+      let sql = "CASE";
+      if (col.caseValue) sql += ` ${colSQL(col.caseValue, ctx)}`;
+      for (const branch of col.branches ?? []) {
+        const whenSql = col.caseValue
+          ? colSQL(branch.when as ColumnExpr, ctx)
+          : condSQL(branch.when as Condition, ctx);
+        sql += ` WHEN ${whenSql} THEN ${ph(ctx)}`;
+        pushVal(branch.then, ctx);
+      }
+      if (col.else !== undefined) {
+        sql += ` ELSE ${ph(ctx)}`;
+        pushVal(col.else, ctx);
+      }
+      sql += " END";
+      if (col.alias) sql += ` AS ${q(col.alias, ctx)}`;
+      return sql;
+    }
     default: return q(col.name ?? "?", ctx);
   }
 }
@@ -397,6 +425,26 @@ function condSQL(cond: Condition, ctx: Ctx): string {
     case "between": pushVal(cond.min, ctx); pushVal(cond.max, ctx); return `${colSQL(cond.left, ctx)} BETWEEN ${ph(ctx)} AND ${ph(ctx)}`;
     case "in": for (const v of cond.values) pushVal(v, ctx); return `${colSQL(cond.left, ctx)} IN (${cond.values.map(() => ph(ctx)).join(", ")})`;
     case "notIn": for (const v of cond.values) pushVal(v, ctx); return `${colSQL(cond.left, ctx)} NOT IN (${cond.values.map(() => ph(ctx)).join(", ")})`;
+    case "inSubquery": {
+      const sub = translateSelect(cond.subquery, ctx);
+      ctx.params.push(...sub.params);
+      return `${colSQL(cond.left, ctx)} IN (${sub.sql})`;
+    }
+    case "notInSubquery": {
+      const sub = translateSelect(cond.subquery, ctx);
+      ctx.params.push(...sub.params);
+      return `${colSQL(cond.left, ctx)} NOT IN (${sub.sql})`;
+    }
+    case "exists": {
+      const sub = translateSelect(cond.subquery, ctx);
+      ctx.params.push(...sub.params);
+      return `EXISTS (${sub.sql})`;
+    }
+    case "notExists": {
+      const sub = translateSelect(cond.subquery, ctx);
+      ctx.params.push(...sub.params);
+      return `NOT EXISTS (${sub.sql})`;
+    }
     case "isNull": return `${colSQL(cond.left, ctx)} IS NULL`;
     case "isNotNull": return `${colSQL(cond.left, ctx)} IS NOT NULL`;
     case "and": return cond.conditions.length > 0 ? cond.conditions.map(c => `(${condSQL(c, ctx)})`).join(" AND ") : "1=1";

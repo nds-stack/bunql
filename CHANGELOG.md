@@ -1,11 +1,14 @@
 # Changelog
 
-## [v0.3.0-beta.4] — 2026-05-30
+## [v0.3.0-beta.5] — 2026-05-30
 
 ### Added
-- **$addFields / $set aggregate stages** — now parsed and translated to SQL computed columns (`CONCAT`, `+`) and MongoDB `$addFields`
+- **CASE WHEN THEN ELSE expression** — parsed (simple + searched), SQL `CASE WHEN...THEN...ELSE...END`, MongoDB `$switch`, nested CASE in THEN
+- **Subquery in WHERE** — `IN (SELECT ...)`, `NOT IN (SELECT ...)`, `EXISTS (SELECT ...)`, `NOT EXISTS (SELECT ...)` — SQL direct emit, MongoDB throws explanatory error
+- **Window functions** — `ROW_NUMBER()`, `RANK()`, `DENSE_RANK()`, `FIRST_VALUE()`, `LAST_VALUE()` with `OVER (PARTITION BY ... ORDER BY ...)` — SQL `OVER (...)` emit for all 3 dialects
+- **16 new tests** (408 → 424) covering CASE, subquery, window functions + edge cases
+- **$addFields / $set aggregate stages** — parsed and translated to SQL computed columns and MongoDB `$addFields`
 - **New update operators** — `$min`, `$max`, `$pop`, `$rename` parsed and translated to SQL SET
-- **8 new tests** (400 → 408) covering $addFields→SQL, $set→SQL→MongoDB, $min/$max/$pop/$rename update
 - **53 tests from beta.3** covering parser, MQL operators, accumulators, aggregate stages, SQL round-trips, JOIN→`$lookup`
 - **$push accumulator** — now generates `json_group_array(col)` (SQLite/PG) or `GROUP_CONCAT(col)` (MySQL) instead of invalid `PUSH(col)`
 

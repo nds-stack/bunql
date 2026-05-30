@@ -83,7 +83,9 @@ function translateSelect(n: SelectNode, params: unknown[]): MongoCommand {
   const hasGroup = !!n.groupBy;
   const hasDistinct = !!n.distinct;
   const hasAggrFunc = n.columns.some(c => c.type === "function" && ["COUNT", "SUM", "AVG", "MIN", "MAX"].includes((c.func ?? "").toUpperCase()));
-  const needsPipeline = hasJoins || hasGroup || hasDistinct || hasAggrFunc || !!n.having;
+  const hasCase = n.columns.some(c => c.type === "case");
+  const hasWindowFunc = n.columns.some(c => c.type === "function" && c.over);
+  const needsPipeline = hasJoins || hasGroup || hasDistinct || hasAggrFunc || hasCase || hasWindowFunc || !!n.having;
 
   if (needsPipeline) {
     const pipeline: Record<string, unknown>[] = [];
@@ -150,12 +152,26 @@ function translateSelect(n: SelectNode, params: unknown[]): MongoCommand {
     if (n.orderBy) pipeline.push({ $sort: orderByToMQL(n.orderBy) });
 
     if ((hasGroup || hasAggrFunc || hasDistinct) && n.columns.some(c => c.type !== "wildcard")) {
-      const proj: Record<string, number> = { _id: 0 };
+      const proj: Record<string, number | Record<string, unknown>> = { _id: 0 };
       for (const c of n.columns) {
         if (c.type === "function") proj[c.alias ?? (c.func ?? "").toLowerCase()] = 1;
+        else if (c.type === "case") proj[c.alias ?? "case"] = caseToMQL(c, params);
         else if (c.type !== "wildcard") proj[colName(c)] = 1;
       }
       pipeline.push({ $project: proj });
+    }
+
+    if (!hasGroup && !hasAggrFunc && !hasDistinct && n.columns.some(c => c.type === "case" || c.type === "function" && c.over)) {
+      // Non-aggregate CASE or window function: add a $project stage
+      const proj: Record<string, number | Record<string, unknown>> = {};
+      for (const c of n.columns) {
+        if (c.type === "case") proj[c.alias ?? "case"] = caseToMQL(c, params);
+        else if (c.type === "function" && c.over) {
+          throw new Error("Window functions require MongoDB 5.0+ ($setWindowFields). Not yet implemented for MongoDB translator.");
+        }
+        else if (c.type !== "wildcard") proj[colName(c)] = 1;
+      }
+      if (Object.keys(proj).length > 0) pipeline.push({ $project: proj });
     }
 
     if (n.offset !== undefined) pipeline.push({ $skip: n.offset });
@@ -356,8 +372,28 @@ function condToMQL(cond: Condition, params: unknown[]): Record<string, unknown> 
       }
       return { $nor: [inner] };
     }
+    case "inSubquery":
+    case "notInSubquery":
+    case "exists":
+    case "notExists":
+      throw new Error(`Subquery condition ${cond.type} not supported for MongoDB translator. Use SQL backend or pre-compute values.`);
     default: return {};
   }
+}
+
+function caseToMQL(caseExpr: import("../ast/ast.ts").ColumnExpr, params: unknown[]): Record<string, unknown> {
+  const branches = (caseExpr.branches ?? []).map(b => {
+    const caseCondition = caseExpr.caseValue
+      ? { $eq: [colName(b.when as import("../ast/ast.ts").ColumnExpr), resolveValue(b.then as import("../ast/ast.ts").ValueExpr, params)] }
+      : condToMQL(b.when as Condition, params);
+    return { case: caseCondition, then: resolveValue(b.then as import("../ast/ast.ts").ValueExpr, params) };
+  });
+  return {
+    $switch: {
+      branches,
+      ...(caseExpr.else !== undefined ? { default: resolveValue(caseExpr.else as import("../ast/ast.ts").ValueExpr, params) } : {}),
+    },
+  };
 }
 
 function colName(col: ColumnExpr): string {

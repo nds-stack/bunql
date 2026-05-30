@@ -21,6 +21,12 @@ const KEYWORDS = new Set([
   "count", "sum", "avg", "min", "max",
   "begin", "commit", "rollback", "returning",
   "with", "union", "intersect", "except", "exists", "all",
+  // CASE expression
+  "case", "when", "then", "else", "end",
+  // Window functions
+  "over", "partition", "rows", "range", "unbounded", "preceding", "following", "current",
+  "row_number", "rank", "dense_rank", "first_value", "last_value", "ntile", "lead", "lag",
+  // DDL
   "primary", "key", "default", "unique", "if",
   "integer", "text", "varchar", "boolean", "real", "blob",
 ]);
