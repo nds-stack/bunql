@@ -1,5 +1,19 @@
 # Changelog
 
+## [v0.3.0-beta.8] — 2026-05-30
+
+### Added
+- **Computed `$project` SQL**: `$subtract`, `$multiply`, `$divide`, `$toUpper`, `$substr` — all now translate to SQL expressions
+- **`$push` update → SQL array append**: `json_set(col, '$[#]', val)` (SQLite), `col || val` (PG), `JSON_ARRAY_APPEND(col, '$', val)` (MySQL)
+- **`$push`/`$addToSet` PG**: now uses `json_agg()` / `json_agg(DISTINCT)` instead of SQLite-only `json_group_array()`
+- **Correlated MongoDB `$lookup`**: `EXISTS (SELECT ... WHERE x = y)` now uses `let` + `$expr` for proper correlation
+- **EXPLAIN keyword support**: parser recognizes EXPLAIN (returns raw passthrough node)
+- **README matrix updated**: 9 new rows (CASE, scalar subquery, window functions, UPSERT, CREATE/DROP INDEX, `$addFields`, `$min/$max/$pop/$rename`)
+
+### Fixed
+- `$push` accumulator PG: `json_agg()` instead of `json_group_array()`
+- `$addToSet` accumulator PG: `json_agg(DISTINCT)` instead of `json_group_array(DISTINCT)`
+
 ## [v0.3.0-beta.7] — 2026-05-30
 
 ### Added
