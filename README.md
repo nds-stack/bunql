@@ -14,7 +14,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue?logo=typescript)](https://www.typescriptlang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-434-green)]()
-[![Bundle](https://img.shields.io/badge/bundle-129.5KB%20core%20%2F%20144.8KB%20driver-blue)]()
+[![Bundle](https://img.shields.io/badge/bundle-133.8KB%20core%20%2F%20147.3KB%20driver-blue)]()
 
 ---
 
@@ -120,7 +120,7 @@ db.mql("users").insertOne({ name: "Bob", email: "b@t.com" });
 
 ### Beyond bun:sqlite parity
 
-| Raw `bun:sqlite` | `@nds-stack/bunql` |
+| Raw `bun:sqlite` + npm packages | `@nds-stack/bunql` |
 |---|---|
 | Manual BEGIN/COMMIT/ROLLBACK | `db.transaction(cb)` — 3 lock modes, SAVEPOINT nesting |
 | Manual statement lifecycle | LRU cache (100), auto-finalize on close |
@@ -131,7 +131,7 @@ db.mql("users").insertOne({ name: "Bob", email: "b@t.com" });
 | Manual PRAGMA loops | `db.pragma("key", { simple: true })` |
 | Raw errors | Typed `BunQLError` hierarchy with `.cause` |
 | No auto-maintenance | Scheduled WAL checkpoint, vacuum, backup |
-| Node.js polyfills | Bun-native: `Bun.file()`, `Bun.connect()`, `Bun.sleep()` |
+| npm packages for MongoDB/Redis/PG/MySQL | Custom TCP via `Bun.connect()` — zero external deps, full control |
 
 ---
 
@@ -977,7 +977,7 @@ db.run(sql, params)
 | Serialization | Manual | `db.serialize()` + `BunQL.deserialize()` |
 | Graceful shutdown | Manual | Drain pending ops + cache finalize |
 | Backend support | SQLite only | SQLite + MongoDB + Redis + PostgreSQL + MySQL — one query language |
-| Bundle size | Built-in | +129.5KB core / +5.2KB server (SQLite) / +144.8KB driver (all backends) |
+| Bundle size | Built-in | +133.8KB core / +5.2KB server (SQLite) / +147.3KB driver (all backends) |
 
 bunql is not a replacement for `bun:sqlite` — it's an **ergonomic layer** on top. You still write raw SQL. The wrapper handles what `bun:sqlite` leaves bare: transactions, statement lifecycle, observability, graceful shutdown.
 
@@ -1092,7 +1092,7 @@ Benchmark of `@nds-stack/bunql` custom TCP drivers (PG, MySQL, MongoDB, Redis) a
 | **Redis** | SELECT | — | — | — |
 | **Redis** | INSERT | — | — | — |
 
-> SQLite SELECT overhead comes from BunQL's cache lookup + query parsing + row-to-object mapping. SQLite INSERT overhead is negligible because `run()` passes through directly to `bun:sqlite`. PG overhead comes from extended query protocol (Parse+Bind+Describe+Execute+Sync pipeline). MySQL uses simple COM_QUERY with inline params, keeping overhead under 2%. MongoDB has no baseline since Bun has no built-in MongoDB driver. Redis benchmark was skipped because Redis server was not available on the test machine. Bundle: 129.5KB core / 144.8KB driver / 87.8KB query / 5.2KB server.
+> SQLite SELECT overhead comes from BunQL's cache lookup + query parsing + row-to-object mapping. SQLite INSERT overhead is negligible because `run()` passes through directly to `bun:sqlite`. PG overhead comes from extended query protocol (Parse+Bind+Describe+Execute+Sync pipeline). MySQL uses simple COM_QUERY with inline params, keeping overhead under 2%. MongoDB has no baseline since Bun has no built-in MongoDB driver. Redis benchmark was skipped because Redis server was not available on the test machine. Bundle: 133.8KB core / 147.3KB driver / 92.1KB query / 5.2KB server.
 
 ---
 
@@ -1319,7 +1319,7 @@ Write operations via the `/run` endpoint are synchronous (direct to `bun:sqlite`
 
 ## Stability
 
-- **v0.3.0-beta.7 (current)** — All 5 backends + 434 tests + CASE + Subquery WHERE/EXISTS + Window Functions + UPSERT + CREATE/DROP INDEX + Scalar subquery + MongoDB `$lookup` pipeline + clean lint
+- **v0.3.0-beta.8 (current)** — All 5 backends + 434 tests + CASE + Subquery WHERE/EXISTS/MongoDB + Window Functions + UPSERT + DDL + Scalar subquery + Computed `$project` + Correlated `$lookup` + Backend parity fixes
 - **v0.3.0 (stable)** — Statement format control, transaction modes, pragma helper, serialize, verbose mode
 - **434 tests** — unit, integration, concurrency, stress, FTS5, parser, translators, BSON, RESP, PG wire, MySQL wire, transactions, MQL operators, CASE, subquery, windows, UPSERT, DDL
 - **v0.3.0 (stable)** — Statement format control, transaction modes, pragma helper, serialize, verbose mode
@@ -1332,7 +1332,7 @@ Write operations via the `/run` endpoint are synchronous (direct to `bun:sqlite`
 - **Hand-written parsers** — SQL parser (recursive descent), MQL parser (object traversal), all wire protocols
 - **Observability** — built-in metrics counters, cache stats, WAL monitoring, slow query detection, verbose tracing
 - **Audit score** — 100/100 (zero BLOCKING issues)
-- **Bundle** — 129.5KB core, 5.2KB server, 144.8KB driver (MongoDB + Redis + PG + MySQL), 87.8KB query (SQL + MQL builder)
+- **Bundle** — 133.8KB core, 5.2KB server, 147.3KB driver (MongoDB + Redis + PG + MySQL), 92.1KB query (SQL + MQL builder)
 
 ---
 
