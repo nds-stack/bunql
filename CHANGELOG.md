@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.3.0-beta.7] — 2026-05-30
+
+### Added
+- **Known Limitations section** to README: scalar subqueries, Redis data types, backend asymmetries table
+- **JSDoc clarification** on `RunResult.lastInsertRowid` per backend
+
+### Changed
+- README Stability section updated to reflect current version
+
 ## [v0.3.0-beta.6] — 2026-05-30
 
 ### Added

@@ -5,6 +5,14 @@
 
 export interface RunResult {
   changes: number;
+  /**
+   * Last inserted row ID — backend-specific behavior:
+   * - SQLite: number (native support via last_insert_rowid())
+   * - PostgreSQL: bigint (via RETURNING clause)
+   * - MySQL: number (only for AUTO_INCREMENT columns; 0 otherwise)
+   * - MongoDB: number | bigint (inserted _id as number or hex bigint)
+   * - Redis: 0 (no rowid concept — returns number of affected keys)
+   */
   lastInsertRowid: number | bigint;
 }
 

@@ -1171,6 +1171,31 @@ Benchmark of `@nds-stack/bunql` custom TCP drivers (PG, MySQL, MongoDB, Redis) a
 
 ---
 
+## Known Limitations
+
+### Scalar Subqueries
+```sql
+-- Not yet supported — use JOIN or application-level filtering:
+WHERE salary > (SELECT AVG(salary) FROM employees)
+```
+Use application-level filtering, rewrite as JOIN, or pre-compute values for now.
+
+### Redis Data Types
+Redis backend serializes all values to strings. Numbers, booleans, and dates are preserved on read/write within the same Redis instance, but cross-backend queries may require explicit type conversion.
+
+### Backend Asymmetries
+| Feature | SQLite | PostgreSQL | MySQL | MongoDB | Redis |
+|---------|--------|-----------|-------|---------|-------|
+| `RETURNING` clause | ✅ | ✅ | ❌ (<8.0.21) | ❌ | ❌ |
+| Window functions | ✅ 3.25+ | ✅ | ✅ 8.0+ | ❌ (<5.0) | ❌ |
+| Subquery WHERE | ✅ | ✅ | ✅ | ❌ | ❌ |
+| `$type` accuracy | `TYPEOF()` | `1=1` (no-op) | `JSON_TYPE()` | native | ❌ |
+
+### Error Handling
+When a feature is not supported by a backend, BunQL throws a typed `BunQLError` with a clear message — no silent failures or wrong results.
+
+---
+
 Errors in bunql follow a typed hierarchy. The original error is always preserved via `cause` — no swallowed errors:
 
 ```
@@ -1292,7 +1317,7 @@ Write operations via the `/run` endpoint are synchronous (direct to `bun:sqlite`
 
 ## Stability
 
-- **v0.3.0-beta.6 (current)** — All 5 backends + 424 tests + CASE WHEN + Subquery WHERE/EXISTS + Window Functions + Parser fixes + Lint clean
+- **v0.3.0-beta.7 (current)** — All 5 backends + 424 tests + CASE WHEN + Subquery WHERE/EXISTS + Window Functions + Known Limitations docs + JSDoc cleanup
 - **v0.3.0 (stable)** — Statement format control, transaction modes, pragma helper, serialize, verbose mode
 - **424 tests** — unit, integration, concurrency, stress, FTS5, parser, translators, BSON, RESP, PG wire, MySQL wire, transactions, MQL operators, CASE, subquery, windows
 - **5000 sequential writes** — verified stable

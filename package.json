@@ -1,6 +1,6 @@
 {
   "name": "@nds-stack/bunql",
-  "version": "0.3.0-beta.6",
+  "version": "0.3.0-beta.7",
   "description": "Bun Query Language — tulis SQL/MQL, jalan di SQLite, MongoDB, Redis, PostgreSQL, MySQL. Zero-dep drivers via custom wire protocol.",
   "author": "nds-stack <nds.stack@gmail.com>",
   "type": "module",
