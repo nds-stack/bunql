@@ -124,7 +124,7 @@ function translateSelect(n: SelectNode, params: unknown[]): MongoCommand {
     // Extract subquery conditions from WHERE and convert to $lookup stages
     let subqueryIndex = 0;
     const subqueryLookups: Record<string, unknown>[] = [];
-    const processedWhere = n.where ? extractSubqueries(n.where, params, () => `_sub_${subqueryIndex++}`, subqueryLookups) : undefined;
+    const processedWhere = n.where ? extractSubqueries(n.where, params, () => `_sub_${subqueryIndex++}`, subqueryLookups, collection) : undefined;
     for (const lookup of subqueryLookups) pipeline.push(lookup);
 
     if (processedWhere) pipeline.push({ $match: condToMQL(processedWhere, params) });
@@ -407,7 +407,8 @@ function extractSubqueries(
   cond: Condition,
   params: unknown[],
   nameGen: () => string,
-  lookups: Record<string, unknown>[]
+  lookups: Record<string, unknown>[],
+  outerCollection?: string
 ): Condition {
   switch (cond.type) {
     case "inSubquery":
@@ -416,13 +417,35 @@ function extractSubqueries(
       const sub = cond.subquery;
       const from = typeof sub.from === "string" ? sub.from : sub.from.name;
       const subPipeline: Record<string, unknown>[] = [];
-      if (sub.where) subPipeline.push({ $match: condToMQL(sub.where, params) });
-      // Project only the relevant field
-      const targetField = cond.type === "inSubquery" ? cond.left.name : undefined;
-      if (targetField) subPipeline.push({ $project: { [targetField]: 1, _id: 0 } });
-      lookups.push({ $lookup: { from, pipeline: subPipeline, as: stageName } });
+
+      // Detect correlation: subquery WHERE references outer collection
+      const correlation = findCorrelation(sub.where, outerCollection);
+      if (correlation) {
+        const outerVar = `_cor_${correlation.outerField}`;
+        subPipeline.push({
+          $match: {
+            $expr: {
+              $eq: [`$${correlation.innerField}`, `$$${outerVar}`],
+            },
+          },
+        });
+        lookups.push({
+          $lookup: {
+            from,
+            let: { [outerVar]: `$${correlation.outerField}` },
+            pipeline: subPipeline,
+            as: stageName,
+          },
+        });
+      } else {
+        if (sub.where) subPipeline.push({ $match: condToMQL(sub.where, params) });
+        const targetField = cond.type === "inSubquery" ? (cond.left as ColumnExpr).name : undefined;
+        if (targetField) subPipeline.push({ $project: { [targetField]: 1, _id: 0 } });
+        lookups.push({ $lookup: { from, pipeline: subPipeline, as: stageName } });
+      }
+
       const isNegated = cond.type === "notInSubquery";
-      return { type: isNegated ? "eq" : "neq", left: { type: "column" as const, name: stageName }, right: [] as unknown as import("../ast/ast.ts").ValueExpr } as Condition;
+      return { type: isNegated ? "eq" : "neq", left: { type: "column" as const, name: stageName }, right: [] as unknown as ValueExpr } as Condition;
     }
     case "exists":
     case "notExists": {
@@ -430,21 +453,71 @@ function extractSubqueries(
       const sub = cond.subquery;
       const from = typeof sub.from === "string" ? sub.from : sub.from.name;
       const subPipeline: Record<string, unknown>[] = [];
-      if (sub.where) subPipeline.push({ $match: condToMQL(sub.where, params) });
+
+      const correlation = findCorrelation(sub.where, outerCollection);
+      const outerVar = correlation ? `_cor_${correlation.outerField}` : "";
+      if (correlation) {
+        subPipeline.push({
+          $match: {
+            $expr: {
+              $eq: [`$${correlation.innerField}`, `$$${outerVar}`],
+            },
+          },
+        });
+      } else {
+        if (sub.where) subPipeline.push({ $match: condToMQL(sub.where, params) });
+      }
       subPipeline.push({ $limit: 1 });
-      lookups.push({ $lookup: { from, pipeline: subPipeline, as: stageName } });
+
+      if (correlation) {
+        lookups.push({
+          $lookup: {
+            from,
+            let: { [outerVar]: `$${correlation.outerField}` },
+            pipeline: subPipeline,
+            as: stageName,
+          },
+        });
+      } else {
+        lookups.push({ $lookup: { from, pipeline: subPipeline, as: stageName } });
+      }
+
       const isNegated = cond.type === "notExists";
-      return { type: isNegated ? "eq" : "neq", left: { type: "column" as const, name: stageName }, right: [] as unknown as import("../ast/ast.ts").ValueExpr } as Condition;
+      return { type: isNegated ? "eq" : "neq", left: { type: "column" as const, name: stageName }, right: [] as unknown as ValueExpr } as Condition;
     }
     case "and":
-      return { ...cond, conditions: cond.conditions.map(c => extractSubqueries(c, params, nameGen, lookups)) };
+      return { ...cond, conditions: cond.conditions.map(c => extractSubqueries(c, params, nameGen, lookups, outerCollection)) };
     case "or":
-      return { ...cond, conditions: cond.conditions.map(c => extractSubqueries(c, params, nameGen, lookups)) };
+      return { ...cond, conditions: cond.conditions.map(c => extractSubqueries(c, params, nameGen, lookups, outerCollection)) };
     case "not":
-      return { ...cond, condition: extractSubqueries(cond.condition, params, nameGen, lookups) };
+      return { ...cond, condition: extractSubqueries(cond.condition, params, nameGen, lookups, outerCollection) };
     default:
       return cond;
   }
+}
+
+function findCorrelation(where: Condition | undefined, outerCollection?: string): { innerField: string; outerField: string } | null {
+  if (!where || !outerCollection) return null;
+  // Scan for column references with table matching outerCollection
+  const refs = findColumnRefs(where);
+  const outerRef = refs.find(r => r.table === outerCollection);
+  if (!outerRef) return null;
+  // Find the inner field in the same expression (same eq condition)
+  // Assume the INNER column is the OTHER side of the eq
+  return { innerField: outerRef.name ?? "_id", outerField: outerRef.name ?? "_id" };
+}
+
+function findColumnRefs(cond: Condition): { table: string; name: string }[] {
+  if (cond.type === "eq" || cond.type === "neq" || cond.type === "gt" || cond.type === "lt" || cond.type === "gte" || cond.type === "lte") {
+    const result: { table: string; name: string }[] = [];
+    if ((cond.left as ColumnExpr).table) result.push({ table: (cond.left as ColumnExpr).table!, name: (cond.left as ColumnExpr).name ?? "?" });
+    const rightCond = cond as Record<string, unknown>;
+    if (typeof rightCond.right === "object" && (rightCond.right as ColumnExpr)?.table) result.push({ table: (rightCond.right as ColumnExpr).table!, name: (rightCond.right as ColumnExpr).name ?? "?" });
+    return result;
+  }
+  if (cond.type === "and" || cond.type === "or") return (cond as import("../ast/ast.ts").AndCondition).conditions.flatMap(c => findColumnRefs(c));
+  if (cond.type === "not") return findColumnRefs((cond as import("../ast/ast.ts").NotCondition).condition);
+  return [];
 }
 
 function caseToMQL(caseExpr: import("../ast/ast.ts").ColumnExpr, params: unknown[]): Record<string, unknown> {

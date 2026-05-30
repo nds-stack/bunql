@@ -1128,6 +1128,11 @@ Benchmark of `@nds-stack/bunql` custom TCP drivers (PG, MySQL, MongoDB, Redis) a
 | `UNION` / `INTERSECT` / `EXCEPT` | ✅ | ✅ | ✅ | ❌ | ❌ |
 | `INSERT ... SELECT` | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Arithmetic `+`, `-`, `*`, `/`, `%` | ✅ | ✅ | ✅ | ⚠️ | ❌ |
+| `CASE WHEN THEN ELSE` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Scalar subquery `col > (SELECT ...)` | ✅ | ✅ | ✅ | ❌ | ❌ |
+| `IN (SELECT ...)` / `EXISTS` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Window functions `OVER (PARTITION BY...)` | ✅ 3.25+ | ✅ | ✅ 8.0+ | ❌ | ❌ |
+| UPSERT `ON CONFLICT` / `ON DUPLICATE KEY` | ✅ | ✅ | ✅ | ❌ | ❌ |
 | `RETURNING` clause | ✅ | ✅ | ❌ | ❌ | ❌ |
 | **Aggregate pipeline stages** | | | | | |
 | `$match` → `WHERE` | ✅ | ✅ | ✅ | ✅ | ❌ |
@@ -1137,6 +1142,7 @@ Benchmark of `@nds-stack/bunql` custom TCP drivers (PG, MySQL, MongoDB, Redis) a
 | `$lookup` (simple + complex) | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
 | `$unwind` | ❌ | ❌ | ❌ | ✅ | ❌ |
 | `$sample` | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
+| `$addFields` / `$set` | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
 | **MQL operators** | | | | | |
 | `$eq`, `$ne`, `$gt`, `$lt`, `$gte`, `$lte` | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `$in`, `$nin` | ✅ | ✅ | ✅ | ✅ | ❌ |
@@ -1149,6 +1155,7 @@ Benchmark of `@nds-stack/bunql` custom TCP drivers (PG, MySQL, MongoDB, Redis) a
 | `$set` | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `$inc` / `$unset` | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `$push` / `$pull` | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
+| `$min` / `$max` / `$pop` / `$rename` | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
 | **MQL accumulators** | | | | | |
 | `$sum`, `$avg`, `$min`, `$max`, `$count` | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `$push`, `$addToSet` | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
@@ -1156,6 +1163,8 @@ Benchmark of `@nds-stack/bunql` custom TCP drivers (PG, MySQL, MongoDB, Redis) a
 | **DDL** | | | | | |
 | `CREATE TABLE` | ✅ | ✅ | ✅ | ❌ | ❌ |
 | `DROP TABLE` | ✅ | ✅ | ✅ | ❌ | ❌ |
+| `CREATE INDEX` | ✅ | ✅ | ✅ | ❌ | ❌ |
+| `DROP INDEX` | ✅ | ✅ | ✅ | ❌ | ❌ |
 | **Transactions** | | | | | |
 | BEGIN / COMMIT / ROLLBACK | ✅ | ✅ | ✅ | ❌ | ❌ |
 | SAVEPOINT nesting | ✅ | ✅ | ✅ | ✅ | ❌ |
@@ -1173,13 +1182,6 @@ Benchmark of `@nds-stack/bunql` custom TCP drivers (PG, MySQL, MongoDB, Redis) a
 
 ## Known Limitations
 
-### Scalar Subqueries
-```sql
--- Not yet supported — use JOIN or application-level filtering:
-WHERE salary > (SELECT AVG(salary) FROM employees)
-```
-Use application-level filtering, rewrite as JOIN, or pre-compute values for now.
-
 ### Redis Data Types
 Redis backend serializes all values to strings. Numbers, booleans, and dates are preserved on read/write within the same Redis instance, but cross-backend queries may require explicit type conversion.
 
@@ -1187,8 +1189,8 @@ Redis backend serializes all values to strings. Numbers, booleans, and dates are
 | Feature | SQLite | PostgreSQL | MySQL | MongoDB | Redis |
 |---------|--------|-----------|-------|---------|-------|
 | `RETURNING` clause | ✅ | ✅ | ❌ (<8.0.21) | ❌ | ❌ |
-| Window functions | ✅ 3.25+ | ✅ | ✅ 8.0+ | ❌ (<5.0) | ❌ |
-| Subquery WHERE | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Window functions `OVER (...)` | ✅ 3.25+ | ✅ | ✅ 8.0+ | ❌ (<5.0) | ❌ |
+| Scalar subquery `col > (SELECT...)` | ✅ | ✅ | ✅ | ❌ | ❌ |
 | `$type` accuracy | `TYPEOF()` | `1=1` (no-op) | `JSON_TYPE()` | native | ❌ |
 
 ### Error Handling
@@ -1317,7 +1319,7 @@ Write operations via the `/run` endpoint are synchronous (direct to `bun:sqlite`
 
 ## Stability
 
-- **v0.3.0-beta.7 (current)** — All 5 backends + 434 tests + CASE WHEN + Subquery WHERE/EXISTS/MongoDB + Window Functions + UPSERT + CREATE/DROP INDEX + Scalar subquery
+- **v0.3.0-beta.7 (current)** — All 5 backends + 434 tests + CASE + Subquery WHERE/EXISTS + Window Functions + UPSERT + CREATE/DROP INDEX + Scalar subquery + MongoDB `$lookup` pipeline + clean lint
 - **v0.3.0 (stable)** — Statement format control, transaction modes, pragma helper, serialize, verbose mode
 - **434 tests** — unit, integration, concurrency, stress, FTS5, parser, translators, BSON, RESP, PG wire, MySQL wire, transactions, MQL operators, CASE, subquery, windows, UPSERT, DDL
 - **v0.3.0 (stable)** — Statement format control, transaction modes, pragma helper, serialize, verbose mode

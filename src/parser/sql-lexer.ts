@@ -30,6 +30,8 @@ const KEYWORDS = new Set([
   "conflict", "duplicate", "nothing", "do", "excluded",
   // Index
   "index",
+  // EXPLAIN
+  "explain", "analyze",
   // DDL
   "primary", "key", "default", "unique", "if",
   "integer", "text", "varchar", "boolean", "real", "blob",

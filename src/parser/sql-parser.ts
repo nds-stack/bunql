@@ -54,6 +54,12 @@ class Parser {
       return selectNode;
     }
 
+    // EXPLAIN — return raw passthrough (caller reconstructs full SQL)
+    if (kw === "explain") {
+      this.#advance();
+      return { type: "raw", sql: "EXPLAIN", params: [] };
+    }
+
     switch (kw) {
       case "select": {
         const left = this.#parseSelect();

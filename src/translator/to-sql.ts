@@ -141,6 +141,21 @@ function translateUpdate(n: import("../ast/ast.ts").UpdateNode, ctx: Ctx): SQLRe
           setClauses.push(`${q(op.field, ctx)} = ${ph(ctx)}`);
           pushVal(op.value, ctx);
           break;
+        case "push":
+          pushVal(op.value, ctx);
+          if (ctx.dialect === "mysql") {
+            setClauses.push(`${q(op.field, ctx)} = JSON_ARRAY_APPEND(${q(op.field, ctx)}, '$', ${ph(ctx)})`);
+          } else if (ctx.dialect === "postgresql") {
+            setClauses.push(`${q(op.field, ctx)} = ${q(op.field, ctx)} || ${ph(ctx)}`);
+          } else {
+            setClauses.push(`${q(op.field, ctx)} = json_set(${q(op.field, ctx)}, '$[#]', ${ph(ctx)})`);
+          }
+          break;
+        case "pull":
+          // $pull: SQL has no direct array removal equivalent — best-effort SET
+          setClauses.push(`${q(op.field, ctx)} = ${ph(ctx)}`);
+          pushVal(op.value, ctx);
+          break;
         case "rename": {
           const newName = String(op.value);
           setClauses.push(`${q(newName, ctx)} = ${q(op.field, ctx)}`);
@@ -218,9 +233,9 @@ function translateAggregate(n: import("../ast/ast.ts").AggregateNode, ctx: Ctx):
         const idParts = Object.entries(stage.id).map(([k, v]) => v ? `${v} AS ${k}` : `'${k}' AS ${k}`);
         const accParts = Object.entries(stage.accumulators).map(([k, a]) => {
           if (a.func === "addToSet") {
-            return ctx.dialect === "mysql"
-              ? `GROUP_CONCAT(DISTINCT ${a.field}) AS ${k}`
-              : `json_group_array(DISTINCT ${a.field}) AS ${k}`;
+            if (ctx.dialect === "mysql") return `GROUP_CONCAT(DISTINCT ${a.field}) AS ${k}`;
+            if (ctx.dialect === "postgresql") return `json_agg(DISTINCT ${a.field}) AS ${k}`;
+            return `json_group_array(DISTINCT ${a.field}) AS ${k}`;
           }
           if (a.func === "first" || a.func === "last") {
             const orderPart = orderByClauses.length > 0
@@ -234,9 +249,9 @@ function translateAggregate(n: import("../ast/ast.ts").AggregateNode, ctx: Ctx):
             return `${fn}(${a.field}) ${over} AS ${k}`;
           }
           if (a.func === "push") {
-            return ctx.dialect === "mysql"
-              ? `GROUP_CONCAT(${a.field}) AS ${k}`
-              : `json_group_array(${a.field}) AS ${k}`;
+            if (ctx.dialect === "mysql") return `GROUP_CONCAT(${a.field}) AS ${k}`;
+            if (ctx.dialect === "postgresql") return `json_agg(${a.field}) AS ${k}`;
+            return `json_group_array(${a.field}) AS ${k}`;
           }
           return `${a.func.toUpperCase()}(${a.field}) AS ${k}`;
         });
@@ -258,18 +273,8 @@ function translateAggregate(n: import("../ast/ast.ts").AggregateNode, ctx: Ctx):
       case "project": {
         if (!hasGroup) {
           selectColumns = Object.entries(stage.fields).filter(([, v]) => v !== 0 && v !== false).map(([k, v]) => {
-            if (typeof v === "object" && v !== null && "$concat" in v) {
-              const args = ((v as Record<string, unknown>).$concat as (string | Record<string, unknown>)[] ?? []).map(arg =>
-                typeof arg === "string" && arg.startsWith("$") ? colSQL({ type: "column", name: (arg as string).slice(1) }, ctx) : `'${arg}'`
-              );
-              return `CONCAT(${args.join(", ")}) AS ${q(k, ctx)}`;
-            }
-            if (typeof v === "object" && v !== null && "$add" in v) {
-              const args = ((v as Record<string, unknown>).$add as (string | Record<string, unknown>)[] ?? []).map(arg =>
-                typeof arg === "string" && arg.startsWith("$") ? colSQL({ type: "column", name: (arg as string).slice(1) }, ctx) : String(arg)
-              );
-              return `(${args.join(" + ")}) AS ${q(k, ctx)}`;
-            }
+            const computed = computedToSQL(k, v, ctx);
+            if (computed) return computed;
             const name = typeof k === "string" ? k : String(k);
             return `${q(name, ctx)}`;
           });
@@ -287,18 +292,8 @@ function translateAggregate(n: import("../ast/ast.ts").AggregateNode, ctx: Ctx):
       }
       case "addFields": {
         const addCols = Object.entries(stage.fields).map(([k, v]) => {
-          if (typeof v === "object" && v !== null && "$concat" in v) {
-            const args = ((v as Record<string, unknown>).$concat as (string | Record<string, unknown>)[] ?? []).map(arg =>
-              typeof arg === "string" && arg.startsWith("$") ? colSQL({ type: "column", name: (arg as string).slice(1) }, ctx) : `'${arg}'`
-            );
-            return `CONCAT(${args.join(", ")}) AS ${q(k, ctx)}`;
-          }
-          if (typeof v === "object" && v !== null && "$add" in v) {
-            const args = ((v as Record<string, unknown>).$add as (string | Record<string, unknown>)[] ?? []).map(arg =>
-              typeof arg === "string" && arg.startsWith("$") ? colSQL({ type: "column", name: (arg as string).slice(1) }, ctx) : String(arg)
-            );
-            return `(${args.join(" + ")}) AS ${q(k, ctx)}`;
-          }
+          const computed = computedToSQL(k, v, ctx);
+          if (computed) return computed;
           pushVal(v as ValueExpr, ctx);
           return `${q(k, ctx)}`;
         });
@@ -504,4 +499,56 @@ function translateSetOp(node: import("../ast/ast.ts").SetOpNode, ctx: Ctx): SQLR
   };
   const sql = `${left.sql} ${opMap[node.op]} ${right.sql}`;
   return { sql, params: ctx.params };
+}
+
+// Helper for computed expressions in $project / $addFields
+function computedToSQL(key: string, v: unknown, ctx: Ctx): string | null {
+  const expr = v as Record<string, unknown>;
+  if (typeof v !== "object" || v === null) return null;
+
+  if ("$concat" in expr) {
+    const args = (expr.$concat as (string | Record<string, unknown>)[] ?? []).map(arg =>
+      typeof arg === "string" && arg.startsWith("$") ? colSQL({ type: "column", name: arg.slice(1) }, ctx) : `'${arg}'`
+    );
+    return `CONCAT(${args.join(", ")}) AS ${q(key, ctx)}`;
+  }
+  if ("$add" in expr) {
+    const args = (expr.$add as (string | Record<string, unknown>)[] ?? []).map(arg =>
+      typeof arg === "string" && arg.startsWith("$") ? colSQL({ type: "column", name: arg.slice(1) }, ctx) : String(arg)
+    );
+    return `(${args.join(" + ")}) AS ${q(key, ctx)}`;
+  }
+  if ("$subtract" in expr) {
+    const args = (expr.$subtract as (string | Record<string, unknown>)[] ?? []).map(arg =>
+      typeof arg === "string" && arg.startsWith("$") ? colSQL({ type: "column", name: arg.slice(1) }, ctx) : String(arg)
+    );
+    return `(${args.join(" - ")}) AS ${q(key, ctx)}`;
+  }
+  if ("$multiply" in expr) {
+    const args = (expr.$multiply as (string | Record<string, unknown>)[] ?? []).map(arg =>
+      typeof arg === "string" && arg.startsWith("$") ? colSQL({ type: "column", name: arg.slice(1) }, ctx) : String(arg)
+    );
+    return `(${args.join(" * ")}) AS ${q(key, ctx)}`;
+  }
+  if ("$divide" in expr) {
+    const args = (expr.$divide as (string | Record<string, unknown>)[] ?? []).map(arg =>
+      typeof arg === "string" && arg.startsWith("$") ? colSQL({ type: "column", name: arg.slice(1) }, ctx) : String(arg)
+    );
+    return `(${args.join(" / ")}) AS ${q(key, ctx)}`;
+  }
+  if ("$toUpper" in expr) {
+    const arg = typeof expr.$toUpper === "string" && expr.$toUpper.startsWith("$")
+      ? colSQL({ type: "column", name: (expr.$toUpper as string).slice(1) }, ctx)
+      : `'${expr.$toUpper}'`;
+    return `UPPER(${arg}) AS ${q(key, ctx)}`;
+  }
+  if ("$substr" in expr) {
+    const args = expr.$substr as [string | Record<string, unknown>, number, number];
+    const str = typeof args[0] === "string" && args[0].startsWith("$")
+      ? colSQL({ type: "column", name: (args[0] as string).slice(1) }, ctx)
+      : `'${args[0]}'`;
+    return `SUBSTR(${str}, ${args[1]}, ${args[2]}) AS ${q(key, ctx)}`;
+  }
+
+  return null;
 }
