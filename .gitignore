@@ -42,10 +42,11 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 *.db-shm
 *.db-wal
 *.zip
-# Markdown docs (keep README + CHANGELOG)
+# Markdown docs (keep README + CHANGELOG + DESIGN-DECISIONS)
 *.md
 !README.md
 !CHANGELOG.md
+!DESIGN-DECISIONS.md
 # Deno lockfile
 deno.lock
 
