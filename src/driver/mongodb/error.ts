@@ -1,4 +1,6 @@
-export class MongoError extends Error {
+import { DriverError } from "../../errors/driver-error.ts";
+
+export class MongoError extends DriverError {
   readonly code: number;
   readonly response: Record<string, unknown>;
   constructor(message: string, code?: number, response?: Record<string, unknown>) {

@@ -15,7 +15,7 @@ export function astToRedis(node: ASTNode): RedisCommand {
     case "insert": return translateInsert(node);
     case "update": return translateUpdate(node);
     case "delete": return translateDelete(node);
-    case "aggregate": return { command: "PING", args: [] };
+    case "aggregate": throw new Error("Aggregate queries not supported for Redis translator. Use simple key-value operations instead.");
     case "raw": throw new Error("Raw SQL not supported for Redis translator");
     default: throw new Error(`Unsupported AST node for Redis: ${(node as ASTNode).type}`);
   }

@@ -1,4 +1,6 @@
-export class PGError extends Error {
+import { DriverError } from "../../errors/driver-error.ts";
+
+export class PGError extends DriverError {
   readonly code?: string;
 
   constructor(message: string, code?: string) {
