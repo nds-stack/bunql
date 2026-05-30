@@ -26,6 +26,10 @@ const KEYWORDS = new Set([
   // Window functions
   "over", "partition", "rows", "range", "unbounded", "preceding", "following", "current",
   "row_number", "rank", "dense_rank", "first_value", "last_value", "ntile", "lead", "lag",
+  // UPSERT
+  "conflict", "duplicate", "nothing", "do", "excluded",
+  // Index
+  "index",
   // DDL
   "primary", "key", "default", "unique", "if",
   "integer", "text", "varchar", "boolean", "real", "blob",

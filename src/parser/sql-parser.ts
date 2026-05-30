@@ -71,8 +71,20 @@ class Parser {
       case "insert": return this.#parseInsert();
       case "update": return this.#parseUpdate();
       case "delete": return this.#parseDelete();
-      case "create": return this.#parseCreateTable();
-      case "drop": return this.#parseDropTable();
+      case "create": {
+        const peeked = this.#lex.peek().value;
+        if (peeked === "index" || peeked === "unique") {
+          return this.#parseCreateIndex();
+        }
+        return this.#parseCreateTable();
+      }
+      case "drop": {
+        // Distinguish DROP TABLE / DROP INDEX
+        if (this.#lex.peek().value === "index") {
+          return this.#parseDropIndex();
+        }
+        return this.#parseDropTable();
+      }
       case "begin":
       case "commit":
       case "rollback":
@@ -89,6 +101,34 @@ class Parser {
     const ifExists = this.#match("if") && this.#match("exists");
     const table = this.#parseIdentifier();
     return { type: "dropTable", table, ifExists };
+  }
+
+  #parseCreateIndex(): ASTNode {
+    this.#expect("create");
+    const unique = this.#match("unique");
+    this.#expect("index");
+    const ifNotExists = this.#match("if") && this.#match("not") && this.#match("exists");
+    const name = this.#parseIdentifier();
+    this.#expect("on");
+    const table = this.#parseIdentifier();
+    this.#expect("(");
+    const columns: { column: string; order?: "asc" | "desc" }[] = [];
+    do {
+      if (this.#current.value === ",") this.#advance();
+      const col = this.#parseIdentifier();
+      const order = this.#match("asc") ? "asc" : this.#match("desc") ? "desc" : undefined;
+      columns.push({ column: col, order });
+    } while (this.#current.value === ",");
+    this.#expect(")");
+    return { type: "createIndex", table, name, columns, unique, ifNotExists } as ASTNode;
+  }
+
+  #parseDropIndex(): ASTNode {
+    this.#expect("drop");
+    this.#expect("index");
+    const ifExists = this.#match("if") && this.#match("exists");
+    const name = this.#parseIdentifier();
+    return { type: "dropIndex", name, ifExists } as ASTNode;
   }
 
   #makeSetOp(op: import("../ast/ast.ts").SetOpNode["op"], left: import("../ast/ast.ts").SelectNode): import("../ast/ast.ts").SetOpNode {
@@ -147,7 +187,53 @@ class Parser {
       returning = this.#parseColumnList();
     }
 
-    return { type: "insert", table, columns, values, select: undefined, returning };
+    // UPSERT: ON CONFLICT (PostgreSQL) / ON DUPLICATE KEY (MySQL)
+    let onConflict: import("../ast/ast.ts").InsertNode["onConflict"];
+    if (this.#match("on")) {
+      if (this.#match("conflict")) {
+        // PostgreSQL: ON CONFLICT [(col1, col2)] DO [UPDATE SET ... | NOTHING]
+        let constraint: string[] | undefined;
+        if (this.#match("(")) {
+          constraint = this.#parseColumnList();
+          this.#expect(")");
+        }
+        if (this.#match("do")) {
+          if (this.#match("nothing")) {
+            onConflict = { action: "nothing", constraint };
+          } else if (this.#match("update")) {
+            this.#expect("set");
+            const set: Record<string, import("../ast/ast.ts").ValueExpr> = {};
+            do {
+              if (this.#current.type === "comma") this.#advance();
+              const col = this.#parseIdentifier();
+              this.#expect("=");
+              this.#expect("excluded"); // EXCLUDED.col
+              this.#expect(".");
+              set[col] = this.#parseIdentifier() as unknown as import("../ast/ast.ts").ValueExpr;
+            } while (this.#current.type === "comma");
+            onConflict = { action: "update", constraint, set };
+          }
+        }
+      } else if (this.#match("duplicate")) {
+        // MySQL: ON DUPLICATE KEY UPDATE col1 = VALUES(col1), ...
+        this.#expect("key");
+        this.#expect("update");
+        const set: Record<string, import("../ast/ast.ts").ValueExpr> = {};
+        do {
+          if (this.#current.type === "comma") this.#advance();
+          const col = this.#parseIdentifier();
+          this.#expect("=");
+          // VALUES(col) — store col name, translator emits VALUES(col)
+          this.#expect("values");
+          this.#expect("(");
+          set[col] = this.#parseIdentifier() as unknown as import("../ast/ast.ts").ValueExpr;
+          this.#expect(")");
+        } while (this.#current.type === "comma");
+        onConflict = { action: "update", set };
+      }
+    }
+
+    return { type: "insert", table, columns, values, select: undefined, returning, onConflict };
   }
 
   #parseUpdate(): ASTNode {
@@ -520,6 +606,15 @@ class Parser {
       "=": "eq", "<>": "neq", "!=": "neq", ">": "gt", "<": "lt", ">=": "gte", "<=": "lte",
     };
     const condType = opMap[op] ?? "eq";
+
+    // Scalar subquery: col = (SELECT ...)
+    if (this.#current.value === "(" && this.#lex.peek().value === "select") {
+      this.#advance();
+      const subquery = this.#parseSelect();
+      this.#expect(")");
+      return { type: "scalarSubquery", left, op: condType as "eq" | "neq" | "gt" | "lt" | "gte" | "lte", subquery } as unknown as Condition;
+    }
+
     // Try to parse the right side as a column expression;
     // if it's a literal, use it directly
     const right = this.#parseColumnExpr();

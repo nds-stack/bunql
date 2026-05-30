@@ -17,6 +17,10 @@ export function astToMongo(node: ASTNode, params: unknown[] = []): MongoCommand 
       throw new Error(`MongoDB does not support CREATE TABLE. Collections are created automatically on first insert.`);
     case "dropTable":
       throw new Error(`MongoDB does not support DROP TABLE. Use db.collection.drop() directly.`);
+    case "createIndex":
+      throw new Error(`MongoDB does not support CREATE INDEX. Indexes are created automatically or via createIndex().`);
+    case "dropIndex":
+      throw new Error(`MongoDB does not support DROP INDEX. Use db.collection.dropIndex() directly.`);
     case "setOp":
       throw new Error(`MongoDB does not support ${(node as import("../ast/ast.ts").SetOpNode).op.toUpperCase()} set operations. Use application-level merging instead.`);
     case "raw":
@@ -85,7 +89,8 @@ function translateSelect(n: SelectNode, params: unknown[]): MongoCommand {
   const hasAggrFunc = n.columns.some(c => c.type === "function" && ["COUNT", "SUM", "AVG", "MIN", "MAX"].includes((c.func ?? "").toUpperCase()));
   const hasCase = n.columns.some(c => c.type === "case");
   const hasWindowFunc = n.columns.some(c => c.type === "function" && c.over);
-  const needsPipeline = hasJoins || hasGroup || hasDistinct || hasAggrFunc || hasCase || hasWindowFunc || !!n.having;
+  const hasSubquery = n.where && hasSubqueryCondition(n.where);
+  const needsPipeline = hasJoins || hasGroup || hasDistinct || hasAggrFunc || hasCase || hasWindowFunc || hasSubquery || !!n.having;
 
   if (needsPipeline) {
     const pipeline: Record<string, unknown>[] = [];
@@ -103,7 +108,6 @@ function translateSelect(n: SelectNode, params: unknown[]): MongoCommand {
           if (j.type !== "left") lookup._joinType = j.type;
           pipeline.push({ $lookup: lookup });
         } else if (j.on.type === "expr") {
-          // Column-to-column comparison: extract both sides
           const rightCol = typeof j.on.right === "object" ? colName(j.on.right) : String(j.on.right);
           const lookup: Record<string, unknown> = {
             from: j.table.name,
@@ -117,7 +121,13 @@ function translateSelect(n: SelectNode, params: unknown[]): MongoCommand {
       }
     }
 
-    if (n.where) pipeline.push({ $match: condToMQL(n.where, params) });
+    // Extract subquery conditions from WHERE and convert to $lookup stages
+    let subqueryIndex = 0;
+    const subqueryLookups: Record<string, unknown>[] = [];
+    const processedWhere = n.where ? extractSubqueries(n.where, params, () => `_sub_${subqueryIndex++}`, subqueryLookups) : undefined;
+    for (const lookup of subqueryLookups) pipeline.push(lookup);
+
+    if (processedWhere) pipeline.push({ $match: condToMQL(processedWhere, params) });
 
     if (hasGroup || hasDistinct || hasAggrFunc) {
       const groupStage: Record<string, unknown> = {};
@@ -162,7 +172,6 @@ function translateSelect(n: SelectNode, params: unknown[]): MongoCommand {
     }
 
     if (!hasGroup && !hasAggrFunc && !hasDistinct && n.columns.some(c => c.type === "case" || c.type === "function" && c.over)) {
-      // Non-aggregate CASE or window function: add a $project stage
       const proj: Record<string, number | Record<string, unknown>> = {};
       for (const c of n.columns) {
         if (c.type === "case") proj[c.alias ?? "case"] = caseToMQL(c, params);
@@ -376,8 +385,65 @@ function condToMQL(cond: Condition, params: unknown[]): Record<string, unknown> 
     case "notInSubquery":
     case "exists":
     case "notExists":
-      throw new Error(`Subquery condition ${cond.type} not supported for MongoDB translator. Use SQL backend or pre-compute values.`);
+      // These are handled by extractSubqueries before condToMQL is called
+      // If they reach here, it means they weren't extracted (fallback)
+      return {};
+    case "scalarSubquery":
+      throw new Error(`Scalar subquery not supported for MongoDB. Use SQL backend.`);
     default: return {};
+  }
+}
+
+// Check if a condition tree contains subquery conditions
+function hasSubqueryCondition(cond: Condition): boolean {
+  if (cond.type === "inSubquery" || cond.type === "notInSubquery" || cond.type === "exists" || cond.type === "notExists") return true;
+  if (cond.type === "and" || cond.type === "or") return cond.conditions.some(c => hasSubqueryCondition(c));
+  if (cond.type === "not") return hasSubqueryCondition(cond.condition);
+  return false;
+}
+
+// Traverse condition tree, extract subqueries into $lookup stages, replace with marker conditions
+function extractSubqueries(
+  cond: Condition,
+  params: unknown[],
+  nameGen: () => string,
+  lookups: Record<string, unknown>[]
+): Condition {
+  switch (cond.type) {
+    case "inSubquery":
+    case "notInSubquery": {
+      const stageName = nameGen();
+      const sub = cond.subquery;
+      const from = typeof sub.from === "string" ? sub.from : sub.from.name;
+      const subPipeline: Record<string, unknown>[] = [];
+      if (sub.where) subPipeline.push({ $match: condToMQL(sub.where, params) });
+      // Project only the relevant field
+      const targetField = cond.type === "inSubquery" ? cond.left.name : undefined;
+      if (targetField) subPipeline.push({ $project: { [targetField]: 1, _id: 0 } });
+      lookups.push({ $lookup: { from, pipeline: subPipeline, as: stageName } });
+      const isNegated = cond.type === "notInSubquery";
+      return { type: isNegated ? "eq" : "neq", left: { type: "column" as const, name: stageName }, right: [] as unknown as import("../ast/ast.ts").ValueExpr } as Condition;
+    }
+    case "exists":
+    case "notExists": {
+      const stageName = nameGen();
+      const sub = cond.subquery;
+      const from = typeof sub.from === "string" ? sub.from : sub.from.name;
+      const subPipeline: Record<string, unknown>[] = [];
+      if (sub.where) subPipeline.push({ $match: condToMQL(sub.where, params) });
+      subPipeline.push({ $limit: 1 });
+      lookups.push({ $lookup: { from, pipeline: subPipeline, as: stageName } });
+      const isNegated = cond.type === "notExists";
+      return { type: isNegated ? "eq" : "neq", left: { type: "column" as const, name: stageName }, right: [] as unknown as import("../ast/ast.ts").ValueExpr } as Condition;
+    }
+    case "and":
+      return { ...cond, conditions: cond.conditions.map(c => extractSubqueries(c, params, nameGen, lookups)) };
+    case "or":
+      return { ...cond, conditions: cond.conditions.map(c => extractSubqueries(c, params, nameGen, lookups)) };
+    case "not":
+      return { ...cond, condition: extractSubqueries(cond.condition, params, nameGen, lookups) };
+    default:
+      return cond;
   }
 }
 

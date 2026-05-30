@@ -98,10 +98,14 @@ describe("Subquery IN / EXISTS", () => {
     expect(result.params).toContain(100);
   });
 
-  test("MongoDB subquery throws helpful error", () => {
+  test("MongoDB subquery → $lookup pipeline", () => {
     const sql = "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)";
     const ast = parseSQL(sql);
-    expect(() => astToMongo(ast)).toThrow(/Subquery/);
+    const cmd = astToMongo(ast);
+    expect(cmd.method).toBe("aggregate");
+    const pipeline = cmd.args[0] as Record<string, unknown>[];
+    const lookupStage = pipeline.find(s => (s as Record<string, unknown>).$lookup) as Record<string, unknown> | undefined;
+    expect(lookupStage).toBeDefined();
   });
 });
 
@@ -146,5 +150,107 @@ describe("Window functions", () => {
     const sql = "SELECT ROW_NUMBER() OVER (ORDER BY score) FROM players";
     const ast = parseSQL(sql);
     expect(() => astToMongo(ast)).toThrow();
+  });
+});
+
+describe("CREATE / DROP INDEX", () => {
+  test("CREATE INDEX", () => {
+    const sql = "CREATE INDEX idx_name ON users (name)";
+    const ast = parseSQL(sql);
+    expect(ast.type).toBe("createIndex");
+    if (ast.type === "createIndex") {
+      expect(ast.name).toBe("idx_name");
+      expect(ast.table).toBe("users");
+      expect(ast.columns[0]!.column).toBe("name");
+    }
+  });
+
+  test("CREATE UNIQUE INDEX", () => {
+    const sql = "CREATE UNIQUE INDEX idx_email ON users (email)";
+    const ast = parseSQL(sql);
+    expect(ast.type).toBe("createIndex");
+    if (ast.type === "createIndex") {
+      expect(ast.unique).toBe(true);
+    }
+  });
+
+  test("DROP INDEX", () => {
+    const sql = "DROP INDEX IF EXISTS idx_name";
+    const ast = parseSQL(sql);
+    expect(ast.type).toBe("dropIndex");
+    if (ast.type === "dropIndex") {
+      expect(ast.name).toBe("idx_name");
+      expect(ast.ifExists).toBe(true);
+    }
+  });
+});
+
+describe("UPSERT", () => {
+  test("ON CONFLICT DO UPDATE", () => {
+    const sql = "INSERT INTO users (id, name) VALUES (1, 'Alice') ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name";
+    const ast = parseSQL(sql);
+    expect(ast.type).toBe("insert");
+    if (ast.type === "insert") {
+      expect(ast.onConflict).toBeDefined();
+      expect(ast.onConflict!.action).toBe("update");
+      expect(ast.onConflict!.constraint).toEqual(["id"]);
+    }
+  });
+
+  test("ON CONFLICT DO NOTHING", () => {
+    const sql = "INSERT INTO users (id, name) VALUES (1, 'Alice') ON CONFLICT DO NOTHING";
+    const ast = parseSQL(sql);
+    expect(ast.type).toBe("insert");
+    if (ast.type === "insert") {
+      expect(ast.onConflict).toBeDefined();
+      expect(ast.onConflict!.action).toBe("nothing");
+    }
+  });
+
+  test("SQL UPSERT output (PostgreSQL)", () => {
+    const sql = "INSERT INTO users (id, name) VALUES (1, 'Alice') ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name";
+    const ast = parseSQL(sql);
+    const result = astToSQL(ast, "postgresql");
+    expect(result.sql).toContain("ON CONFLICT");
+    expect(result.sql).toContain("DO UPDATE");
+    expect(result.sql).toContain("EXCLUDED");
+  });
+});
+
+describe("Scalar subquery", () => {
+  test("col > (SELECT ...)", () => {
+    const sql = "SELECT * FROM users WHERE salary > (SELECT AVG(salary) FROM employees)";
+    const ast = parseSQL(sql);
+    const result = astToSQL(ast);
+    expect(result.sql).toContain(">");
+    expect(result.sql).toContain("(SELECT");
+    expect(result.sql).toContain("AVG(salary)");
+  });
+
+  test("col = (SELECT ...)", () => {
+    const sql = "SELECT * FROM users WHERE status = (SELECT MAX(status) FROM orders)";
+    const ast = parseSQL(sql);
+    const result = astToSQL(ast);
+    expect(result.sql).toContain("=");
+    expect(result.sql).toContain("(SELECT");
+  });
+});
+
+describe("MongoDB subquery → $lookup", () => {
+  test("IN (SELECT ...) → aggregate with $lookup", () => {
+    const sql = "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)";
+    const ast = parseSQL(sql);
+    const cmd = astToMongo(ast);
+    expect(cmd.method).toBe("aggregate");
+    const pipeline = cmd.args[0] as Record<string, unknown>[];
+    const lookupStage = pipeline.find(s => (s as Record<string, unknown>).$lookup) as Record<string, unknown> | undefined;
+    expect(lookupStage).toBeDefined();
+  });
+
+  test("EXISTS (SELECT ...) → $lookup with $limit: 1", () => {
+    const sql = "SELECT * FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id)";
+    const ast = parseSQL(sql);
+    const cmd = astToMongo(ast);
+    expect(cmd.method).toBe("aggregate");
   });
 });

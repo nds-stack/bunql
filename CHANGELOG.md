@@ -3,11 +3,16 @@
 ## [v0.3.0-beta.7] — 2026-05-30
 
 ### Added
+- **CREATE INDEX / DROP INDEX** — parser + SQL translator + MongoDB/Redis error
+- **UPSERT** — `INSERT ... ON CONFLICT DO UPDATE/NOTHING` (PostgreSQL) and `ON DUPLICATE KEY UPDATE` (MySQL) parser + SQL translator
+- **Scalar subquery** — `WHERE col > (= <) (SELECT ...)` parser + SQL translator
+- **MongoDB subquery `$lookup` pipeline** — `IN (SELECT ...)` and `EXISTS (SELECT ...)` now translated to `$lookup` + `$match` aggregate pipeline, instead of throwing
+- **10 new tests** (424 → 434) covering CREATE/DROP INDEX, UPSERT, scalar subquery, MongoDB subquery
 - **Known Limitations section** to README: scalar subqueries, Redis data types, backend asymmetries table
 - **JSDoc clarification** on `RunResult.lastInsertRowid` per backend
 
-### Changed
-- README Stability section updated to reflect current version
+### Fixed
+- Lexer: added missing keywords `do`, `excluded`, `conflict`, `duplicate`, `nothing`, `index`
 
 ## [v0.3.0-beta.6] — 2026-05-30
 

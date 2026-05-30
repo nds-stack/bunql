@@ -15,6 +15,8 @@ export function astToSQL(node: ASTNode, dialect: SQLDialect = "sqlite"): SQLResu
     case "aggregate": return translateAggregate(node, ctx);
     case "createTable": return translateCreateTable(node, ctx);
     case "dropTable": return translateDropTable(node);
+    case "createIndex": return translateCreateIndex(node);
+    case "dropIndex": return translateDropIndex(node);
     case "setOp": return translateSetOp(node, ctx);
     case "raw": return { sql: node.sql, params: node.params ?? [] };
     default: throw new Error(`Unknown AST node: ${(node as ASTNode).type}`);
@@ -79,6 +81,26 @@ function translateInsert(n: import("../ast/ast.ts").InsertNode, ctx: Ctx): SQLRe
   }
 
   if (n.returning) sql += ` RETURNING ${n.returning.join(", ")}`;
+
+  // UPSERT: ON CONFLICT (PG/SQLite) / ON DUPLICATE KEY (MySQL)
+  if (n.onConflict) {
+    if (ctx.dialect === "mysql") {
+      sql += " ON DUPLICATE KEY UPDATE ";
+      sql += Object.entries(n.onConflict.set ?? {}).map(([k]) => `${q(k, ctx)} = VALUES(${q(k, ctx)})`).join(", ");
+    } else {
+      sql += " ON CONFLICT";
+      if (n.onConflict.constraint && n.onConflict.constraint.length > 0) {
+        sql += ` (${n.onConflict.constraint.map(c => q(c, ctx)).join(", ")})`;
+      }
+      if (n.onConflict.action === "nothing") {
+        sql += " DO NOTHING";
+      } else {
+        sql += " DO UPDATE SET ";
+        sql += Object.entries(n.onConflict.set ?? {}).map(([k]) => `${q(k, ctx)} = EXCLUDED.${q(k, ctx)}`).join(", ");
+      }
+    }
+  }
+
   return { sql, params: ctx.params };
 }
 
@@ -163,6 +185,18 @@ function translateCreateTable(n: import("../ast/ast.ts").CreateTableNode, ctx: C
 function translateDropTable(n: import("../ast/ast.ts").DropTableNode): SQLResult {
   const ifExists = n.ifExists ? "IF EXISTS " : "";
   return { sql: `DROP TABLE ${ifExists}${n.table}`, params: [] };
+}
+
+function translateCreateIndex(n: import("../ast/ast.ts").CreateIndexNode): SQLResult {
+  const unique = n.unique ? "UNIQUE " : "";
+  const ifNotExists = n.ifNotExists ? "IF NOT EXISTS " : "";
+  const cols = n.columns.map(c => `${c.column}${c.order ? ` ${c.order.toUpperCase()}` : ""}`).join(", ");
+  return { sql: `CREATE ${unique}INDEX ${ifNotExists}${n.name} ON ${n.table} (${cols})`, params: [] };
+}
+
+function translateDropIndex(n: import("../ast/ast.ts").DropIndexNode): SQLResult {
+  const ifExists = n.ifExists ? "IF EXISTS " : "";
+  return { sql: `DROP INDEX ${ifExists}${n.name}`, params: [] };
 }
 
 function translateAggregate(n: import("../ast/ast.ts").AggregateNode, ctx: Ctx): SQLResult {
@@ -444,6 +478,12 @@ function condSQL(cond: Condition, ctx: Ctx): string {
       const sub = translateSelect(cond.subquery, ctx);
       ctx.params.push(...sub.params);
       return `NOT EXISTS (${sub.sql})`;
+    }
+    case "scalarSubquery": {
+      const sub = translateSelect(cond.subquery, ctx);
+      ctx.params.push(...sub.params);
+      const opMap: Record<string, string> = { eq: "=", neq: "<>", gt: ">", lt: "<", gte: ">=", lte: "<=" };
+      return `${colSQL(cond.left, ctx)} ${opMap[cond.op] ?? "="} (${sub.sql})`;
     }
     case "isNull": return `${colSQL(cond.left, ctx)} IS NULL`;
     case "isNotNull": return `${colSQL(cond.left, ctx)} IS NOT NULL`;

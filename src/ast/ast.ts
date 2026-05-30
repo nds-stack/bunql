@@ -3,7 +3,7 @@
  * @description Universal AST node types — single IR for all query languages (SQL, MQL, Redis).
  */
 
-export type ASTNode = SelectNode | InsertNode | UpdateNode | DeleteNode | AggregateNode | CreateTableNode | DropTableNode | SetOpNode | RawNode;
+export type ASTNode = SelectNode | InsertNode | UpdateNode | DeleteNode | AggregateNode | CreateTableNode | DropTableNode | CreateIndexNode | DropIndexNode | SetOpNode | RawNode;
 
 export interface SelectNode {
   type: "select";
@@ -41,6 +41,11 @@ export interface InsertNode {
   values: ValueExpr[][];
   select?: SelectNode;
   returning?: string[];
+  onConflict?: {
+    constraint?: string[];
+    action: "update" | "nothing";
+    set?: Record<string, ValueExpr>;
+  };
 }
 
 export interface UpdateNode {
@@ -94,6 +99,22 @@ export interface CreateTableNode {
 export interface DropTableNode {
   type: "dropTable";
   table: string;
+  ifExists?: boolean;
+}
+
+export interface CreateIndexNode {
+  type: "createIndex";
+  table: string;
+  name: string;
+  columns: { column: string; order?: "asc" | "desc" }[];
+  unique?: boolean;
+  ifNotExists?: boolean;
+}
+
+export interface DropIndexNode {
+  type: "dropIndex";
+  table: string;
+  name: string;
   ifExists?: boolean;
 }
 
@@ -174,7 +195,7 @@ export type Condition =
   | AllCondition
   | SizeCondition | TypeCheckCondition
   | InCondition | NotInCondition
-  | InSubqueryCondition | ExistsCondition
+  | InSubqueryCondition | ExistsCondition | ScalarSubqueryCondition
   | BetweenCondition
   | IsNullCondition | IsNotNullCondition;
 
@@ -202,6 +223,7 @@ export interface IsNullCondition { type: "isNull"; left: ColumnExpr; }
 export interface IsNotNullCondition { type: "isNotNull"; left: ColumnExpr; }
 export interface InSubqueryCondition { type: "inSubquery" | "notInSubquery"; left: ColumnExpr; subquery: SelectNode; }
 export interface ExistsCondition { type: "exists" | "notExists"; subquery: SelectNode; }
+export interface ScalarSubqueryCondition { type: "scalarSubquery"; left: ColumnExpr; op: "eq" | "neq" | "gt" | "lt" | "gte" | "lte"; subquery: SelectNode; }
 
 export function col(name: string, table?: string): ColumnExpr {
   return { type: "column", name, table };
