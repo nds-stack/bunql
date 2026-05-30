@@ -1,9 +1,4 @@
-<p align="center">
-  <picture>
-    <source srcset=".docs/images/banner.webp" type="image/webp">
-    <img src=".docs/images/banner.webp" alt="BunQL" width="800">
-  </picture>
-</p>
+![BunQL Banner](.docs/images/banner.webp)
 
 # @nds-stack/bunql
 
