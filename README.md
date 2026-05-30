@@ -25,7 +25,7 @@
 - [Quick Start](#quick-start)
 - [Examples](#examples)
   - [Bidirectional: SQL on MongoDB](#bidirectional-sql-on-mongodb)
-  - [Bidirectional: MQL on SQLite](#bidirectional-mql-on-sqlite)
+  - [Bidirectional: MQL → SQL](#bidirectional-mql--sql)
   - [Statement Format Control](#statement-format-control)
   - [Permanent Parameter Binding](#permanent-parameter-binding)
   - [Lazy Iteration + Class Mapping](#lazy-iteration--class-mapping)
@@ -183,7 +183,7 @@ sqlite.mql("users").find({ age: { $gt: 25 } }).limit(10);
 ## When to Use
 
 - You write SQL but need to query MongoDB or Redis.
-- You write MQL (MongoDB Query Language) but need to query SQLite or PostgreSQL.
+- You write MQL (MongoDB Query Language) but need to query SQL backends (SQLite, PostgreSQL, MySQL) or switch between them.
 - You want **one API** that works across all your databases — dev uses SQLite, production uses PostgreSQL.
 - You want `.raw()` / `.pluck()` / `.iterate()` / `.as()` on prepared statements — better-sqlite3 parity.
 - You want zero-dependency drivers — no `npm mongodb`, no `ioredis`.
@@ -535,14 +535,14 @@ const stats = mongo.query(
 // → aggregate([{$group:{_id:"$status", count:{$count:{}}}}])
 ```
 
-### Bidirectional: MQL on SQLite
+### Bidirectional: MQL → SQL
 
-Write MongoDB-style queries, runs on SQLite via translation:
+Write MongoDB-style queries, runs on any SQL backend (SQLite, PostgreSQL, MySQL) via translation:
 
 ```typescript
 const sqlite = new BunQL("./app.db");
 
-// MongoDB-style find → SQL SELECT
+// MongoDB-style find → SQL SELECT (works on SQLite, PG, MySQL)
 const users = sqlite.mql("users")
   .find({ age: { $gt: 25 } })
   .project({ name: 1, email: 1 })
@@ -1084,7 +1084,7 @@ sql-parser.ts  →  AST  →  to-mongodb.ts  →  MongoCommand
 Bun.connect() TCP → MongoDB server → BSON decoded → rows
 ```
 
-### Pipeline: MQL on SQLite
+### Pipeline: MQL → SQL
 
 ```
 User: db.mql("users").find({age:{$gt:25}}).project({name:1}).limit(10)
