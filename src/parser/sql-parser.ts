@@ -475,7 +475,7 @@ class Parser {
       }
     }
 
-    let negate = negateIn;
+    const negate = negateIn;
     if (!negateIn && this.#match("in")) {
       // negate stays false (positive IN)
     }

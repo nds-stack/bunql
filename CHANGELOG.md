@@ -1,6 +1,6 @@
 # Changelog
 
-## [v0.3.0-beta.5] — 2026-05-30
+## [v0.3.0-beta.6] — 2026-05-30
 
 ### Added
 - **CASE WHEN THEN ELSE expression** — parsed (simple + searched), SQL `CASE WHEN...THEN...ELSE...END`, MongoDB `$switch`, nested CASE in THEN

@@ -1292,7 +1292,7 @@ Write operations via the `/run` endpoint are synchronous (direct to `bun:sqlite`
 
 ## Stability
 
-- **v0.3.0-beta.5 (current)** — All 5 backends + 424 tests + CASE WHEN + Subquery WHERE/EXISTS + Window Functions + Parser fixes + Lint clean
+- **v0.3.0-beta.6 (current)** — All 5 backends + 424 tests + CASE WHEN + Subquery WHERE/EXISTS + Window Functions + Parser fixes + Lint clean
 - **v0.3.0 (stable)** — Statement format control, transaction modes, pragma helper, serialize, verbose mode
 - **424 tests** — unit, integration, concurrency, stress, FTS5, parser, translators, BSON, RESP, PG wire, MySQL wire, transactions, MQL operators, CASE, subquery, windows
 - **5000 sequential writes** — verified stable
