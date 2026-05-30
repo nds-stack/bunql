@@ -217,6 +217,33 @@ describe("AST → Redis", () => {
     expect(cmd.command).toBe("DEL");
     expect(cmd.args).toEqual(["users:1"]);
   });
+
+  test("SELECT by ORDER BY + LIMIT → ZRANGE", () => {
+    const cmd = astToRedis({
+      type: "select", columns: [{ type: "wildcard" }], from: table("scores"),
+      orderBy: [{ column: col("score"), direction: "desc" }], limit: 10,
+    });
+    expect(cmd.command).toBe("ZREVRANGE");
+    expect(cmd.args).toContain("0");
+    expect(cmd.args).toContain("9");
+    expect(cmd.args).toContain("WITHSCORES");
+  });
+
+  test("SELECT fallback (no WHERE) → SCAN", () => {
+    const cmd = astToRedis({
+      type: "select", columns: [{ type: "wildcard" }], from: table("users"),
+    });
+    expect(cmd.command).toBe("SCAN");
+    expect(cmd.args).toContain("users:*");
+  });
+
+  test("SELECT WHERE id IN (...) → PIPELINE", () => {
+    const cmd = astToRedis({
+      type: "select", columns: [{ type: "wildcard" }], from: table("users"),
+      where: { type: "in", left: col("id"), values: [1, 2, 3] },
+    });
+    expect(cmd.command).toBe("PIPELINE");
+  });
 });
 
 describe("MQL operators → SQL", () => {
@@ -367,6 +394,20 @@ describe("MQL update operators → SQL", () => {
     const result = astToSQL(ast);
     expect(result.sql).toContain("newName = oldName");
   });
+
+  test("$push update → SQL array append", () => {
+    const ast = parseMQL("users", "updateOne", [{ id: 1 }, { $push: { tags: "new" } }]);
+    if (ast.type !== "update") throw new Error(`Expected update, got ${ast.type}`);
+    const result = astToSQL(ast);
+    expect(result.sql).toContain("tags =");
+  });
+
+  test("$pull update → SQL SET", () => {
+    const ast = parseMQL("users", "updateOne", [{ id: 1 }, { $pull: { tags: "old" } }]);
+    if (ast.type !== "update") throw new Error(`Expected update, got ${ast.type}`);
+    const result = astToSQL(ast);
+    expect(result.sql).toContain("tags = ?");
+  });
 });
 
 describe("MQL accumulators → SQL", () => {
@@ -422,6 +463,28 @@ describe("MQL accumulators → SQL", () => {
     if (ast.type === "aggregate") {
       const result = astToSQL(ast);
       expect(result.sql).toContain("json_group_array(name)");
+    }
+  });
+
+  test("$first in $group generates FIRST_VALUE window function", () => {
+    const ast = parseMQL("orders", "aggregate", [[{
+      $group: { _id: "$status", firstName: { $first: "$name" } },
+    }]]);
+    expect(ast.type).toBe("aggregate");
+    if (ast.type === "aggregate") {
+      const result = astToSQL(ast);
+      expect(result.sql).toContain("FIRST_VALUE(name)");
+    }
+  });
+
+  test("$last in $group generates LAST_VALUE window function", () => {
+    const ast = parseMQL("orders", "aggregate", [[{
+      $group: { _id: "$status", lastName: { $last: "$name" } },
+    }]]);
+    expect(ast.type).toBe("aggregate");
+    if (ast.type === "aggregate") {
+      const result = astToSQL(ast);
+      expect(result.sql).toContain("LAST_VALUE(name)");
     }
   });
 });

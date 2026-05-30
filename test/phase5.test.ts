@@ -234,6 +234,18 @@ describe("Scalar subquery", () => {
     expect(result.sql).toContain("=");
     expect(result.sql).toContain("(SELECT");
   });
+
+  test("UPSERT MySQL ON DUPLICATE KEY", () => {
+    const sql = "INSERT INTO users (id, name) VALUES (1, 'Alice') ON DUPLICATE KEY UPDATE name = VALUES(name)";
+    const ast = parseSQL(sql);
+    expect(ast.type).toBe("insert");
+    if (ast.type === "insert") {
+      expect(ast.onConflict).toBeDefined();
+      expect(ast.onConflict!.action).toBe("update");
+    }
+    const result = astToSQL(ast, "mysql");
+    expect(result.sql).toContain("ON DUPLICATE KEY");
+  });
 });
 
 describe("MongoDB subquery → $lookup", () => {

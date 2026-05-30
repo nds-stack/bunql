@@ -1,5 +1,17 @@
 # Changelog
 
+## [v0.3.0-beta.9] — 2026-05-30
+
+### Fixed
+- **AGENTS.md test count**: 138 → 434 (outdated for 3 betas)
+- **Matrix `$type` PostgreSQL**: Row 1117 now correctly shows ⚠️ (was ✅, contradictory)
+- **`$push`/`$addToSet` PG accumulators**: Matrix updated to ✅ (fixed in beta.8 with `json_agg`)
+- **Error hierarchy documented**: Added `ParseError`, `DriverError`, `NotFoundError` to README
+
+### Added
+- **`$pull` limitation documented**: Known Limitations section updated with `$pull` no-op behavior
+- **8 new tests** (434 → 442): `$push`/`$pull` update → SQL, Redis ZRANGE/SCAN/PIPELINE, UPSERT MySQL, `$first`/`$last` SQL output
+
 ## [v0.3.0-beta.8] — 2026-05-30
 
 ### Added

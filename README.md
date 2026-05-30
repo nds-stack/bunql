@@ -13,7 +13,7 @@
 [![Bun](https://img.shields.io/badge/Bun-%3E%3D1.3.0-black?logo=bun)](https://bun.sh)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue?logo=typescript)](https://www.typescriptlang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-434-green)]()
+[![Tests](https://img.shields.io/badge/tests-442-green)]()
 [![Bundle](https://img.shields.io/badge/bundle-133.8KB%20core%20%2F%20147.3KB%20driver-blue)]()
 
 ---
@@ -1114,7 +1114,7 @@ Benchmark of `@nds-stack/bunql` custom TCP drivers (PG, MySQL, MongoDB, Redis) a
 | `BETWEEN` | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `IS NULL` / `IS NOT NULL` | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `AND` / `OR` / `NOT` | ✅ | ✅ | ✅ | ✅ | ❌ |
-| `$mod` / `$size` / `$type` / `$all` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `$mod` / `$size` / `$type` / `$all` | ✅ | ⚠️ | ✅ | ✅ | ❌ |
 | `$elemMatch` | ⚠️ | ✅ | ⚠️ | ✅ | ❌ |
 | `$expr` (field-to-field) | ✅ | ✅ | ✅ | ✅ | ❌ |
 | **Advanced SQL** | | | | | |
@@ -1158,7 +1158,7 @@ Benchmark of `@nds-stack/bunql` custom TCP drivers (PG, MySQL, MongoDB, Redis) a
 | `$min` / `$max` / `$pop` / `$rename` | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
 | **MQL accumulators** | | | | | |
 | `$sum`, `$avg`, `$min`, `$max`, `$count` | ✅ | ✅ | ✅ | ✅ | ❌ |
-| `$push`, `$addToSet` | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
+| `$push`, `$addToSet` | ⚠️ | ✅ | ⚠️ | ✅ | ❌ |
 | `$first`, `$last` | ⚠️ | ✅ | ✅ | ✅ | ❌ |
 | **DDL** | | | | | |
 | `CREATE TABLE` | ✅ | ✅ | ✅ | ❌ | ❌ |
@@ -1185,6 +1185,9 @@ Benchmark of `@nds-stack/bunql` custom TCP drivers (PG, MySQL, MongoDB, Redis) a
 ### Redis Data Types
 Redis backend serializes all values to strings. Numbers, booleans, and dates are preserved on read/write within the same Redis instance, but cross-backend queries may require explicit type conversion.
 
+### `$pull` Array Removal (SQL backends)
+The MQL `$pull` update operator removes elements from an array. SQL has no direct equivalent — the current implementation uses `SET col = ?` (simple value assignment), not actual array removal. For proper array operations on SQL backends, use application-level logic or switch to MongoDB.
+
 ### Backend Asymmetries
 | Feature | SQLite | PostgreSQL | MySQL | MongoDB | Redis |
 |---------|--------|-----------|-------|---------|-------|
@@ -1205,7 +1208,10 @@ BunQLError (base)
 ├── BusyError         — SQLITE_BUSY / SQLITE_BUSY_SNAPSHOT after retries exhausted
 ├── TransactionError  — Transaction scope failure (nested SAVEPOINT, etc.)
 ├── QueueError        — WriteQueue internal failure (closed queue, drain timeout)
-└── ConnectionError   — Database open/close failure, invalid path, WAL requirement
+├── ConnectionError   — Database open/close failure, invalid path, WAL requirement
+├── ParseError        — SQL/MQL parsing error (position info included)
+├── DriverError       — Driver-level failure (wire protocol, auth, timeout)
+└── NotFoundError     — Entity not found (collection, table, index)
 ```
 
 ```typescript
@@ -1319,9 +1325,9 @@ Write operations via the `/run` endpoint are synchronous (direct to `bun:sqlite`
 
 ## Stability
 
-- **v0.3.0-beta.8 (current)** — All 5 backends + 434 tests + CASE + Subquery WHERE/EXISTS/MongoDB + Window Functions + UPSERT + DDL + Scalar subquery + Computed `$project` + Correlated `$lookup` + Backend parity fixes
+- **v0.3.0-beta.9 (current)** — All 5 backends + 442 tests + full backend parity + gap fixes + docs sync
 - **v0.3.0 (stable)** — Statement format control, transaction modes, pragma helper, serialize, verbose mode
-- **434 tests** — unit, integration, concurrency, stress, FTS5, parser, translators, BSON, RESP, PG wire, MySQL wire, transactions, MQL operators, CASE, subquery, windows, UPSERT, DDL
+- **442 tests** — unit, integration, concurrency, stress, FTS5, parser, translators, BSON, RESP, PG wire, MySQL wire, transactions, MQL operators, CASE, subquery, windows, UPSERT, DDL
 - **v0.3.0 (stable)** — Statement format control, transaction modes, pragma helper, serialize, verbose mode
 - **424 tests** — unit, integration, concurrency, stress, FTS5, parser, translators, BSON, RESP, PG wire, MySQL wire, transactions, MQL operators, CASE, subquery, windows
 - **5000 sequential writes** — verified stable
