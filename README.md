@@ -13,8 +13,8 @@
 [![Bun](https://img.shields.io/badge/Bun-%3E%3D1.3.0-black?logo=bun)](https://bun.sh)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue?logo=typescript)](https://www.typescriptlang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-424-green)]()
-[![Bundle](https://img.shields.io/badge/bundle-112.9KB%20core%20%2F%20134.7KB%20driver-blue)]()
+[![Tests](https://img.shields.io/badge/tests-434-green)]()
+[![Bundle](https://img.shields.io/badge/bundle-129.5KB%20core%20%2F%20144.8KB%20driver-blue)]()
 
 ---
 
@@ -977,7 +977,7 @@ db.run(sql, params)
 | Serialization | Manual | `db.serialize()` + `BunQL.deserialize()` |
 | Graceful shutdown | Manual | Drain pending ops + cache finalize |
 | Backend support | SQLite only | SQLite + MongoDB + Redis + PostgreSQL + MySQL — one query language |
-| Bundle size | Built-in | +112.9KB core / +5.2KB server (SQLite) / +134.7KB driver (all backends) |
+| Bundle size | Built-in | +129.5KB core / +5.2KB server (SQLite) / +144.8KB driver (all backends) |
 
 bunql is not a replacement for `bun:sqlite` — it's an **ergonomic layer** on top. You still write raw SQL. The wrapper handles what `bun:sqlite` leaves bare: transactions, statement lifecycle, observability, graceful shutdown.
 
@@ -1092,7 +1092,7 @@ Benchmark of `@nds-stack/bunql` custom TCP drivers (PG, MySQL, MongoDB, Redis) a
 | **Redis** | SELECT | — | — | — |
 | **Redis** | INSERT | — | — | — |
 
-> SQLite SELECT overhead comes from BunQL's cache lookup + query parsing + row-to-object mapping. SQLite INSERT overhead is negligible because `run()` passes through directly to `bun:sqlite`. PG overhead comes from extended query protocol (Parse+Bind+Describe+Execute+Sync pipeline). MySQL uses simple COM_QUERY with inline params, keeping overhead under 2%. MongoDB has no baseline since Bun has no built-in MongoDB driver. Redis benchmark was skipped because Redis server was not available on the test machine. Bundle: 112.9KB core / 134.7KB driver / 71.2KB query / 5.2KB server.
+> SQLite SELECT overhead comes from BunQL's cache lookup + query parsing + row-to-object mapping. SQLite INSERT overhead is negligible because `run()` passes through directly to `bun:sqlite`. PG overhead comes from extended query protocol (Parse+Bind+Describe+Execute+Sync pipeline). MySQL uses simple COM_QUERY with inline params, keeping overhead under 2%. MongoDB has no baseline since Bun has no built-in MongoDB driver. Redis benchmark was skipped because Redis server was not available on the test machine. Bundle: 129.5KB core / 144.8KB driver / 87.8KB query / 5.2KB server.
 
 ---
 
@@ -1317,7 +1317,9 @@ Write operations via the `/run` endpoint are synchronous (direct to `bun:sqlite`
 
 ## Stability
 
-- **v0.3.0-beta.7 (current)** — All 5 backends + 424 tests + CASE WHEN + Subquery WHERE/EXISTS + Window Functions + Known Limitations docs + JSDoc cleanup
+- **v0.3.0-beta.7 (current)** — All 5 backends + 434 tests + CASE WHEN + Subquery WHERE/EXISTS/MongoDB + Window Functions + UPSERT + CREATE/DROP INDEX + Scalar subquery
+- **v0.3.0 (stable)** — Statement format control, transaction modes, pragma helper, serialize, verbose mode
+- **434 tests** — unit, integration, concurrency, stress, FTS5, parser, translators, BSON, RESP, PG wire, MySQL wire, transactions, MQL operators, CASE, subquery, windows, UPSERT, DDL
 - **v0.3.0 (stable)** — Statement format control, transaction modes, pragma helper, serialize, verbose mode
 - **424 tests** — unit, integration, concurrency, stress, FTS5, parser, translators, BSON, RESP, PG wire, MySQL wire, transactions, MQL operators, CASE, subquery, windows
 - **5000 sequential writes** — verified stable
@@ -1328,7 +1330,7 @@ Write operations via the `/run` endpoint are synchronous (direct to `bun:sqlite`
 - **Hand-written parsers** — SQL parser (recursive descent), MQL parser (object traversal), all wire protocols
 - **Observability** — built-in metrics counters, cache stats, WAL monitoring, slow query detection, verbose tracing
 - **Audit score** — 100/100 (zero BLOCKING issues)
-- **Bundle** — 112.9KB core, 5.2KB server, 134.7KB driver (MongoDB + Redis + PG + MySQL), 71.2KB query (SQL + MQL builder)
+- **Bundle** — 129.5KB core, 5.2KB server, 144.8KB driver (MongoDB + Redis + PG + MySQL), 87.8KB query (SQL + MQL builder)
 
 ---
 
