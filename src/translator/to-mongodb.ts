@@ -511,8 +511,8 @@ function findColumnRefs(cond: Condition): { table: string; name: string }[] {
   if (cond.type === "eq" || cond.type === "neq" || cond.type === "gt" || cond.type === "lt" || cond.type === "gte" || cond.type === "lte") {
     const result: { table: string; name: string }[] = [];
     if ((cond.left as ColumnExpr).table) result.push({ table: (cond.left as ColumnExpr).table!, name: (cond.left as ColumnExpr).name ?? "?" });
-    const rightCond = cond as Record<string, unknown>;
-    if (typeof rightCond.right === "object" && (rightCond.right as ColumnExpr)?.table) result.push({ table: (rightCond.right as ColumnExpr).table!, name: (rightCond.right as ColumnExpr).name ?? "?" });
+    const rightCond = cond as unknown as Record<string, unknown>;
+    if (typeof rightCond.right === "object" && rightCond.right !== null && (rightCond.right as ColumnExpr | undefined)?.table) result.push({ table: (rightCond.right as ColumnExpr)!.table!, name: (rightCond.right as ColumnExpr)!.name ?? "?" });
     return result;
   }
   if (cond.type === "and" || cond.type === "or") return (cond as import("../ast/ast.ts").AndCondition).conditions.flatMap(c => findColumnRefs(c));
