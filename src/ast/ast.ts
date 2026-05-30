@@ -48,7 +48,7 @@ export interface UpdateNode {
   table: string;
   set: Record<string, ValueExpr | ColumnExpr>;
   updateOps?: {
-    op: "inc" | "unset" | "push" | "pull" | "set";
+    op: "inc" | "unset" | "push" | "pull" | "set" | "min" | "max" | "pop" | "rename";
     field: string;
     value: ValueExpr;
   }[];
@@ -107,7 +107,8 @@ export type AggregateStage =
   | { stage: "sample"; size: number }
   | { stage: "lookup"; from: string; localField: string; foreignField: string; as: string }
   | { stage: "lookup"; from: string; let?: Record<string, string>; pipeline: AggregateStage[]; as: string }
-  | { stage: "unwind"; path: string; preserveNullAndEmptyArrays?: boolean; includeArrayIndex?: string };
+  | { stage: "unwind"; path: string; preserveNullAndEmptyArrays?: boolean; includeArrayIndex?: string }
+  | { stage: "addFields"; fields: Record<string, number | string | boolean | ComputedExpr> };
 
 export type ComputedExpr = {
   $concat?: (string | ColumnExpr)[];

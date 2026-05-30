@@ -339,6 +339,34 @@ describe("MQL update operators → SQL", () => {
     const result = astToSQL(ast);
     expect(result.sql).toContain("name = ?");
   });
+
+  test("$min update → SQL SET", () => {
+    const ast = parseMQL("users", "updateOne", [{ id: 1 }, { $min: { price: 100 } }]);
+    if (ast.type !== "update") throw new Error(`Expected update, got ${ast.type}`);
+    const result = astToSQL(ast);
+    expect(result.sql).toContain("price = ?");
+  });
+
+  test("$max update → SQL SET", () => {
+    const ast = parseMQL("users", "updateOne", [{ id: 1 }, { $max: { price: 200 } }]);
+    if (ast.type !== "update") throw new Error(`Expected update, got ${ast.type}`);
+    const result = astToSQL(ast);
+    expect(result.sql).toContain("price = ?");
+  });
+
+  test("$pop update → SQL SET", () => {
+    const ast = parseMQL("users", "updateOne", [{ id: 1 }, { $pop: { tags: 1 } }]);
+    if (ast.type !== "update") throw new Error(`Expected update, got ${ast.type}`);
+    const result = astToSQL(ast);
+    expect(result.sql).toContain("tags = ?");
+  });
+
+  test("$rename update → SQL SET new = old", () => {
+    const ast = parseMQL("users", "updateOne", [{ id: 1 }, { $rename: { oldName: "newName" } }]);
+    if (ast.type !== "update") throw new Error(`Expected update, got ${ast.type}`);
+    const result = astToSQL(ast);
+    expect(result.sql).toContain("newName = oldName");
+  });
 });
 
 describe("MQL accumulators → SQL", () => {
@@ -515,6 +543,30 @@ describe("MQL aggregate stages → SQL", () => {
       expect(result.sql).toContain("LIMIT");
     }
   });
+
+  test("$addFields → SQL computed columns", () => {
+    const ast = parseMQL("users", "aggregate", [[{
+      $addFields: { fullName: { $concat: ["$first", " ", "$last"] } },
+    }]]);
+    expect(ast.type).toBe("aggregate");
+    if (ast.type === "aggregate") {
+      const result = astToSQL(ast);
+      expect(result.sql).toContain("fullName");
+      expect(result.sql).toContain("CONCAT");
+    }
+  });
+
+  test("$set stage → SQL computed columns", () => {
+    const ast = parseMQL("users", "aggregate", [[{
+      $set: { total: { $add: ["$price", "$tax"] } },
+    }]]);
+    expect(ast.type).toBe("aggregate");
+    if (ast.type === "aggregate") {
+      const result = astToSQL(ast);
+      expect(result.sql).toContain("total");
+      expect(result.sql).toContain("+");
+    }
+  });
 });
 
 describe("MQL → MongoDB round-trip", () => {
@@ -548,6 +600,31 @@ describe("MQL → MongoDB round-trip", () => {
   test("$sample → MongoDB aggregate", () => {
     const ast = parseMQL("users", "aggregate", [[{
       $sample: { size: 3 },
+    }]]);
+    expect(ast.type).toBe("aggregate");
+    if (ast.type === "aggregate") {
+      const cmd = astToMongo(ast);
+      expect(cmd.method).toBe("aggregate");
+    }
+  });
+
+  test("$addFields → MongoDB $addFields stage", () => {
+    const ast = parseMQL("users", "aggregate", [[{
+      $addFields: { fullName: { $concat: ["$first", " ", "$last"] } },
+    }]]);
+    expect(ast.type).toBe("aggregate");
+    if (ast.type === "aggregate") {
+      const cmd = astToMongo(ast);
+      expect(cmd.method).toBe("aggregate");
+      const pipeline = cmd.args[0] as Record<string, unknown>[];
+      const stage = pipeline.find(s => (s as Record<string, unknown>).$addFields) as Record<string, unknown> | undefined;
+      expect(stage).toBeDefined();
+    }
+  });
+
+  test("$set stage → MongoDB $set stage", () => {
+    const ast = parseMQL("users", "aggregate", [[{
+      $set: { status: "active" },
     }]]);
     expect(ast.type).toBe("aggregate");
     if (ast.type === "aggregate") {

@@ -100,6 +100,21 @@ function parseAggregate(collection: string, pipeline: Record<string, unknown>[])
         return { stage: "unwind", path: "" };
       }
       case "$sample": return { stage: "sample", size: (value as Record<string, number>).size ?? 1 };
+      case "$addFields":
+      case "$set": {
+        const fields: Record<string, number | string | boolean | import("../ast/ast.ts").ComputedExpr> = {};
+        for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+          if (typeof v === "object" && v !== null && !Array.isArray(v)) {
+            const firstKey = Object.keys(v)[0];
+            if (firstKey?.startsWith("$")) {
+              fields[k] = v as import("../ast/ast.ts").ComputedExpr;
+              continue;
+            }
+          }
+          fields[k] = v as number | string | boolean;
+        }
+        return { stage: "addFields", fields };
+      }
       default: return { stage: "limit", count: 0 };
     }
   });
@@ -129,7 +144,7 @@ function parseUpdate(collection: string, filter: Record<string, unknown>, update
   for (const [op, val] of Object.entries(update)) {
     if (op === "$set") {
       Object.assign(set, val as Record<string, Literal>);
-    } else if (["$inc", "$unset", "$push", "$pull"].includes(op)) {
+    } else if (["$inc", "$unset", "$push", "$pull", "$pop", "$min", "$max", "$rename"].includes(op)) {
       const shortOp = op.slice(1) as "inc" | "unset" | "push" | "pull";
       for (const [field, value] of Object.entries(val as Record<string, unknown>)) {
         updateOps.push({ op: shortOp, field, value: value as import("../ast/ast.ts").ValueExpr });

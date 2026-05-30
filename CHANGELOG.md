@@ -1,33 +1,27 @@
 # Changelog
 
-## [v0.3.0-beta.3] — 2026-05-30
+## [v0.3.0-beta.4] — 2026-05-30
 
 ### Added
-- **53 new tests** (397 → 400 + 3 for $nor/$expr/$push fixes):
-  - $nor top-level logical operator
-  - $expr top-level field comparison
-  - $push accumulator (valid SQL output)
-  - Plus 50 from earlier beta.3 batch:
-    - Parser: HAVING, CTE WITH, UNION/INTERSECT/EXCEPT, subquery FROM, INSERT...SELECT, RETURNING (INSERT/UPDATE/DELETE), DROP TABLE, CREATE TABLE constraints, COUNT(DISTINCT), arithmetic expressions
-    - MQL→SQL: `$mod`, `$size`, `$type`, `$all`, `$elemMatch`, `$regex`+`$options`, `$exists`, `$not`, `$inc`, `$unset`, `$set`
-    - Accumulators: `$avg`, `$min`, `$max`, `$addToSet`
-    - Aggregate stages: `$lookup` (simple + complex), `$unwind`, `$sample`
-    - SQL round-trip: HAVING, CTE, UNION, arithmetic, INSERT...SELECT, RETURNING, LEFT JOIN
-    - SQL JOIN → MongoDB `$lookup` (LEFT + INNER)
+- **$addFields / $set aggregate stages** — now parsed and translated to SQL computed columns (`CONCAT`, `+`) and MongoDB `$addFields`
+- **New update operators** — `$min`, `$max`, `$pop`, `$rename` parsed and translated to SQL SET
+- **8 new tests** (400 → 408) covering $addFields→SQL, $set→SQL→MongoDB, $min/$max/$pop/$rename update
+- **53 tests from beta.3** covering parser, MQL operators, accumulators, aggregate stages, SQL round-trips, JOIN→`$lookup`
 - **$push accumulator** — now generates `json_group_array(col)` (SQLite/PG) or `GROUP_CONCAT(col)` (MySQL) instead of invalid `PUSH(col)`
 
 ### Fixed
-- **$nor top-level broken** — `{ $nor: [{ age: 10 }, { age: 20 }] }` now produces `WHERE (NOT (age = ?)) AND (NOT (age = ?))`. Previously treated as `$in` on field `"$nor"`.
-- **$expr top-level broken** — `{ $expr: { $gt: ["$balance", "$limit"] } }` now produces `WHERE balance > limit`. Previously treated as field `"$expr"` comparison.
+- **$addFields / $set stage no-op bug** — previously fell through to default `{ limit: 0 }`, silently corrupting pipeline
+- **$nor top-level broken** — `{ $nor: [{ age: 10 }, { age: 20 }] }` now produces `WHERE (NOT (age = ?)) AND (NOT (age = ?))`
+- **$expr top-level broken** — `{ $expr: { $gt: ["$balance", "$limit"] } }` now produces `WHERE balance > limit`
 - **$and/$or top-level** — same guard added for consistency
-- Parser: `=`, `<>`, `>`, `<`, `>=`, `<=` operator right side now parsed as column expression, fixing JOIN `ON a.id = b.user_id` column-to-column comparisons
-- Parser: `WITH`, `UNION`, `INTERSECT`, `EXCEPT`, `ALL`, `PRIMARY`, `KEY`, `DEFAULT`, `UNIQUE`, `IF`, `EXISTS` keywords now registered in lexer (code existed but unreachable)
+- Parser: `=`, `<>`, `>`, `<`, `>=`, `<=` operator right side now parsed as column expression, fixing JOIN column-to-column comparisons
+- Parser: `WITH`, `UNION`, `INTERSECT`, `EXCEPT`, `ALL`, `PRIMARY`, `KEY`, `DEFAULT`, `UNIQUE`, `IF`, `EXISTS` keywords registered in lexer
 - Parser: Subquery FROM `(SELECT ...)` uses correct rparen token type check
 - Parser: `#parseDelete()` now supports `RETURNING` clause
-- Parser: `#parseDropTable()` now returns proper `dropTable` AST node instead of raw
-- Translator: JOIN column-to-column `$expr` condition added reverse operator mapping (`eq`→`=`, `neq`→`<>`, etc.) for SQL output
-- Translator: SQL JOIN → MongoDB `$lookup` now handles column-to-column `$expr` conditions
-- Lint: 37 ESLint warnings eliminated (unused vars/imports, any types, empty blocks)
+- Parser: `#parseDropTable()` returns proper `dropTable` AST node instead of raw
+- Translator: JOIN `$expr` condition reverse operator mapping (`eq`→`=`, etc.) for SQL output
+- Translator: SQL JOIN → MongoDB `$lookup` handles column-to-column `$expr` conditions
+- Lint: 37 ESLint warnings eliminated
 
 ## [v0.3.0-beta.2] — 2026-05-30
 

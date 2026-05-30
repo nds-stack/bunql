@@ -108,6 +108,22 @@ function translateUpdate(n: import("../ast/ast.ts").UpdateNode, ctx: Ctx): SQLRe
         case "unset":
           setClauses.push(`${q(op.field, ctx)} = NULL`);
           break;
+        case "min":
+        case "max":
+          // $min/$max: SET col = ? (best-effort — SQL can't conditionally update easily)
+          setClauses.push(`${q(op.field, ctx)} = ${ph(ctx)}`);
+          pushVal(op.value, ctx);
+          break;
+        case "pop":
+          // $pop: SET col = ? — SQL has no array pop equivalent
+          setClauses.push(`${q(op.field, ctx)} = ${ph(ctx)}`);
+          pushVal(op.value, ctx);
+          break;
+        case "rename": {
+          const newName = String(op.value);
+          setClauses.push(`${q(newName, ctx)} = ${q(op.field, ctx)}`);
+          break;
+        }
         default:
           setClauses.push(`${q(op.field, ctx)} = ${ph(ctx)}`);
           pushVal(op.value, ctx);
@@ -233,6 +249,26 @@ function translateAggregate(n: import("../ast/ast.ts").AggregateNode, ctx: Ctx):
           const joinType = "_joinType" in stage ? String((stage as Record<string, unknown>)._joinType) : "left";
           joinClauses.push(` ${joinType.toUpperCase()} JOIN ${q(stage.from, ctx)} ON ${tableName}.${stage.localField} = ${q(stage.from, ctx)}.${stage.foreignField}`);
         }
+        break;
+      }
+      case "addFields": {
+        const addCols = Object.entries(stage.fields).map(([k, v]) => {
+          if (typeof v === "object" && v !== null && "$concat" in v) {
+            const args = ((v as Record<string, unknown>).$concat as (string | Record<string, unknown>)[] ?? []).map(arg =>
+              typeof arg === "string" && arg.startsWith("$") ? colSQL({ type: "column", name: (arg as string).slice(1) }, ctx) : `'${arg}'`
+            );
+            return `CONCAT(${args.join(", ")}) AS ${q(k, ctx)}`;
+          }
+          if (typeof v === "object" && v !== null && "$add" in v) {
+            const args = ((v as Record<string, unknown>).$add as (string | Record<string, unknown>)[] ?? []).map(arg =>
+              typeof arg === "string" && arg.startsWith("$") ? colSQL({ type: "column", name: (arg as string).slice(1) }, ctx) : String(arg)
+            );
+            return `(${args.join(" + ")}) AS ${q(k, ctx)}`;
+          }
+          pushVal(v as ValueExpr, ctx);
+          return `${q(k, ctx)}`;
+        });
+        if (!hasGroup) selectColumns.push(...addCols);
         break;
       }
     }
