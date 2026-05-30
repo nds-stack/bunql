@@ -657,6 +657,75 @@ const buf = db.serialize();          // → Uint8Array
 const db2 = BunQL.deserialize(buf);  // → new BunQL instance
 ```
 
+### Real-World Example: Multi-Backend API Service
+
+```typescript
+import { BunQL } from "@nds-stack/bunql";
+import { MongoDriver, RedisDriver } from "@nds-stack/bunql/driver";
+import { sql } from "@nds-stack/bunql/query";
+
+// ─── Initialize backends ──────────────────────────────────
+const pg    = new BunQL("postgres://postgres@localhost:5432/app");
+const mongo = new MongoDriver("mongodb://localhost:27017/app");
+const cache = new RedisDriver("redis://localhost:6379");
+
+// ─── Create tables on startup ─────────────────────────────
+await pg.run(`
+  CREATE TABLE IF NOT EXISTS users (
+    id    SERIAL PRIMARY KEY,
+    name  TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL
+  )
+`);
+
+// ─── Query with caching layer ────────────────────────────
+async function getUser(id: number) {
+  // Check cache first
+  const cached = cache.query("SELECT * FROM users WHERE id = ?", [id]);
+  if (cached.rows.length > 0) return cached.rows[0];
+
+  // Fall back to PostgreSQL
+  const result = await pg.query("SELECT * FROM users WHERE id = ?", [id]);
+  const user = result.rows[0];
+
+  // Write-through cache
+  if (user) cache.run("INSERT INTO users (id, name, email) VALUES (?, ?, ?)",
+    [user.id, user.name, user.email]);
+  return user;
+}
+
+// ─── Log to MongoDB ──────────────────────────────────────
+async function logActivity(userId: number, action: string) {
+  await mongo.run(
+    "INSERT INTO activity_log (_id, user_id, action, created_at) VALUES (?, ?, ?, ?)",
+    [Date.now(), userId, action, new Date().toISOString()]
+  );
+}
+
+// ─── Cross-backend report ────────────────────────────────
+async function activeUsersReport() {
+  // MongoDB: get recent activity
+  const active = await mongo.query(
+    "SELECT DISTINCT user_id FROM activity_log WHERE created_at > ?",
+    [new Date(Date.now() - 86400000).toISOString()]
+  );
+
+  // SQL: enrich with user details
+  const ids = active.rows.map(r => r.user_id);
+  if (ids.length === 0) return [];
+  const placeholders = ids.map(() => "?").join(", ");
+  return pg.query(
+    `SELECT id, name, email FROM users WHERE id IN (${placeholders})`,
+    ids
+  );
+}
+
+// ─── Usage ────────────────────────────────────────────────
+console.log(await getUser(1));      // → cached or from PG
+await logActivity(1, "login");      // → logged to MongoDB
+console.log(await activeUsersReport());  // → cross-backend join
+```
+
 ---
 
 ## API
@@ -831,6 +900,125 @@ interface FTSResult {
 }
 ```
 
+### Driver API (`@nds-stack/bunql/driver`)
+
+Each driver implements the `DriverAdapter` interface (`query`, `run`, `close` methods).
+
+#### MongoDriver
+
+```typescript
+import { MongoDriver } from "@nds-stack/bunql/driver";
+
+// Connection string or options object
+const db = new MongoDriver("mongodb://localhost:27017/mydb");
+// or:
+const db = new MongoDriver({
+  hostname: "localhost",
+  port: 27017,
+  db: "mydb",
+  username: "user",      // optional — SCRAM-SHA-256
+  password: "pass",       // optional
+  authDb: "admin",        // optional, default: "admin"
+  maxPoolSize: 5,         // optional, default: 5
+});
+```
+
+#### PGDriver
+
+```typescript
+import { PGDriver } from "@nds-stack/bunql/driver";
+
+const db = new PGDriver("postgres://user:pass@localhost:5432/mydb");
+// or:
+const db = new PGDriver({
+  hostname: "localhost",
+  port: 5432,
+  db: "mydb",
+  user: "postgres",
+  password: "secret",    // optional — trust/md5/password auth
+  maxPoolSize: 5,        // optional, default: 5
+});
+```
+
+#### MySQLDriver
+
+```typescript
+import { MySQLDriver } from "@nds-stack/bunql/driver";
+
+const db = new MySQLDriver("mysql://root@localhost:3306/mydb");
+// or:
+const db = new MySQLDriver({
+  hostname: "localhost",
+  port: 3306,
+  db: "mydb",
+  user: "root",
+  password: "secret",    // optional — mysql_native_password
+  maxPoolSize: 5,        // optional, default: 5
+});
+```
+
+#### RedisDriver
+
+```typescript
+import { RedisDriver } from "@nds-stack/bunql/driver";
+
+const db = new RedisDriver("redis://localhost:6379");
+// or:
+const db = new RedisDriver({
+  hostname: "localhost",
+  port: 6379,
+  password: "secret",    // optional — AUTH
+  db: 0,                 // optional — SELECT database
+  maxPoolSize: 5,        // optional, default: 5
+});
+```
+
+### Query Builder (`@nds-stack/bunql/query`)
+
+```typescript
+import { sql, mql } from "@nds-stack/bunql/query";
+
+// SQL tagged template — parameterized, safe from injection
+const q = sql`SELECT * FROM users WHERE age > ${18}`;
+await q.all(db);     // → T[]
+await q.get(db);     // → T | undefined
+await q.run(db);     // → RunResult
+q.sql                // → "SELECT * FROM users WHERE age > ?"
+q.params             // → [18]
+
+// MQL chain API — fluent builder
+const q2 = mql("users")
+  .find({ age: { $gt: 18 } })
+  .project({ name: 1, email: 1 })
+  .sort({ age: -1 })
+  .limit(10);
+
+await q2.all(db);    // → T[]
+await q2.get(db);    // → T | undefined
+
+// Conditions helper
+import { eq, gt, and, or, like, inList, between, isNull, col } from "@nds-stack/bunql/query";
+const cond = and(
+  eq(col("status"), "active"),
+  gt(col("age"), 18)
+);
+```
+
+### Relations API (`@nds-stack/bunql/query`)
+
+```typescript
+import { sql, defineTable, relations } from "@nds-stack/bunql/query";
+
+const users = defineTable("users", { id: "INTEGER", name: "TEXT" });
+const orders = defineTable("orders", { id: "INTEGER", user_id: "INTEGER" });
+
+const schema = relations(users, (r) => ({
+  orders: r.one(orders, { from: "id", to: "user_id" }),
+}));
+
+const q = sql`SELECT * FROM users`;
+const rows = await q.with(schema).all(db);  // → users with nested orders
+```
 
 
 ## Architecture
