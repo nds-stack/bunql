@@ -1301,7 +1301,8 @@ Benchmark of `@nds-stack/bunql` custom TCP drivers (PG, MySQL, MongoDB, Redis) a
 | `$elemMatch` | ⚠️ | ✅ | ⚠️ | ✅ | ❌ |
 | `$expr` (field-to-field) | ✅ | ✅ | ✅ | ✅ | ❌ |
 | **Advanced SQL** | | | | | |
-| `JOIN` (INNER/LEFT/RIGHT/FULL/CROSS/NATURAL) | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `JOIN` (INNER/LEFT/RIGHT) | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `JOIN` (FULL/CROSS/NATURAL) | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ❌ |
 | `GROUP BY` + aggregate functions | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `HAVING` | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `DISTINCT` / `COUNT(DISTINCT col)` | ✅ | ✅ | ✅ | ✅ | ❌ |
@@ -1350,7 +1351,7 @@ Benchmark of `@nds-stack/bunql` custom TCP drivers (PG, MySQL, MongoDB, Redis) a
 | `DROP INDEX` | ✅ | ✅ | ✅ | ❌ | ❌ |
 | **Transactions** | | | | | |
 | BEGIN / COMMIT / ROLLBACK | ✅ | ✅ | ✅ | ❌ | ❌ |
-| SAVEPOINT nesting | ✅ | ✅ | ✅ | ✅ | ❌ |
+| SAVEPOINT nesting | ✅ | ✅ | ✅ | ❌ | ❌ |
 | **Connection** | | | | | |
 | Connection pooling | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Parameterized queries | ✅ | ✅ | ✅ | ✅ | ❌ |
@@ -1370,6 +1371,12 @@ Redis backend serializes all values to strings. Numbers, booleans, and dates are
 
 ### `$pull` Array Removal (SQL backends)
 The MQL `$pull` update operator removes elements from an array. SQL has no direct equivalent — the current implementation uses `SET col = ?` (simple value assignment), not actual array removal. For proper array operations on SQL backends, use application-level logic or switch to MongoDB.
+
+### JOIN Types (FULL / CROSS / NATURAL)
+FULL JOIN, CROSS JOIN, and NATURAL JOIN are parsed and accepted, but the parser approximates them as INNER JOIN (`sql-parser.ts` maps `full` and `cross` to `type: "inner"`). The original join type is not preserved in the AST, so translators always produce INNER JOIN SQL. For MongoDB, all JOIN types map to `$lookup` — FULL/CROSS semantic differences are not expressible.
+
+### MongoDB SAVEPOINT
+MongoDB standalone (non-replica-set) does not support multi-document transactions or SAVEPOINTs. The `SAVEPOINT` method on `MongoConnection` is a no-op. Use SQL backends for transaction-heavy workloads with nested savepoints.
 
 ### Backend Asymmetries
 | Feature | SQLite | PostgreSQL | MySQL | MongoDB | Redis |
